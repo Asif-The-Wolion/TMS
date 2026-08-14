@@ -1,0 +1,1663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Teacher Planner — Asif National</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0f1319; --bg2:#141a22; --card:#1a212b; --card2:#1f2733;
+  --line:#293241; --line2:#33404f;
+  --ink:#eef2f6; --ink-dim:#a9b4c2; --ink-faint:#6b7787;
+  --amber:#e0a458; --amber-soft:#f0c98a; --teal:#5fb9a8; --blue:#6fa3d8;
+  --ok:#7fbf8a; --warn:#e0a458; --err:#e07a6f;
+  --radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;}
+body{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  background:var(--bg); color:var(--ink);
+  padding-bottom:78px;
+  font-size:14px; line-height:1.45;
+}
+h1,h2,h3{font-family:'Fraunces',serif;font-weight:600;letter-spacing:-0.01em;}
+button,input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink);}
+button{cursor:pointer;}
+a{color:inherit;}
+::-webkit-scrollbar{width:0;height:0;}
+
+/* ---------- Top bar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:20;
+  background:rgba(15,19,25,0.92);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);
+  padding:14px 16px 12px;
+}
+.topbar-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.brand{display:flex;flex-direction:column;}
+.brand .eyebrow{font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;}
+.brand h1{font-size:19px;color:var(--ink);}
+.topbar-actions{display:flex;gap:8px;}
+.icon-btn{
+  background:var(--card2);border:1px solid var(--line2);border-radius:10px;
+  width:38px;height:38px;display:flex;align-items:center;justify-content:center;
+  font-size:16px;color:var(--ink-dim);
+}
+.icon-btn:active{background:var(--line2);}
+
+.search-bar{margin-top:10px;position:relative;}
+.search-bar input{
+  width:100%;background:var(--card2);border:1px solid var(--line2);border-radius:11px;
+  padding:10px 12px 10px 34px;color:var(--ink);
+}
+.search-bar::before{content:"🔍";position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:12px;opacity:0.5;}
+.search-results{
+  margin-top:8px;background:var(--card2);border:1px solid var(--line2);border-radius:12px;
+  max-height:340px;overflow-y:auto;
+}
+.search-results .sr-item{padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px;}
+.search-results .sr-item:last-child{border-bottom:none;}
+.sr-cat{font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--amber-soft);font-weight:700;margin-bottom:2px;}
+
+/* ---------- Main ---------- */
+main{padding:16px;max-width:560px;margin:0 auto;}
+.page-title{font-size:20px;margin-bottom:4px;}
+.page-sub{color:var(--ink-faint);font-size:12.5px;margin-bottom:16px;}
+
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px;margin-bottom:14px;
+}
+.card-title{font-size:12px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-faint);font-weight:700;margin-bottom:10px;}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.stat{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;}
+.stat .num{font-family:'Fraunces',serif;font-size:22px;color:var(--ink);}
+.stat .lbl{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+.stat.hot{border-color:rgba(224,164,88,0.4);background:linear-gradient(160deg,rgba(224,164,88,0.12),transparent);}
+.stat.hot .num{color:var(--amber-soft);}
+
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px;}
+.badge.ok{background:rgba(127,191,138,0.14);color:var(--ok);}
+.badge.warn{background:rgba(224,164,88,0.14);color:var(--amber-soft);}
+.badge.err{background:rgba(224,122,111,0.14);color:var(--err);}
+.badge.muted{background:var(--card2);color:var(--ink-faint);}
+
+.btn{
+  border:1px solid var(--line2);background:var(--card2);color:var(--ink);
+  border-radius:10px;padding:10px 14px;font-weight:600;font-size:13px;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+}
+.btn:active{background:var(--line2);}
+.btn.primary{background:var(--amber);border-color:var(--amber);color:#1a1206;}
+.btn.primary:active{background:var(--amber-soft);}
+.btn.ghost{background:transparent;}
+.btn.danger{border-color:rgba(224,122,111,0.5);color:var(--err);background:transparent;}
+.btn.block{width:100%;}
+.btn.sm{padding:7px 10px;font-size:12px;border-radius:8px;}
+
+.list{display:flex;flex-direction:column;gap:10px;}
+.item{
+  background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;
+  display:flex;align-items:center;gap:12px;
+}
+.item .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+.item .body{flex:1;min-width:0;}
+.item .title{font-weight:600;font-size:14px;}
+.item .meta{font-size:12px;color:var(--ink-faint);margin-top:2px;}
+.chev{color:var(--ink-faint);font-size:16px;}
+
+.timeline-item{
+  display:flex;gap:12px;padding:13px 4px;border-bottom:1px solid var(--line);
+}
+.timeline-item:last-child{border-bottom:none;}
+.timeline-item.now{background:linear-gradient(90deg,rgba(224,164,88,0.10),transparent);border-radius:10px;margin:0 -6px;padding:13px 10px;}
+.timeline-item .t{width:78px;flex:none;font-size:12px;color:var(--ink-faint);font-variant-numeric:tabular-nums;padding-top:1px;}
+.timeline-item.now .t{color:var(--amber-soft);font-weight:700;}
+.timeline-item .tbody{flex:1;}
+.timeline-item .ttitle{font-weight:600;font-size:14px;}
+.timeline-item .tnote{font-size:12px;color:var(--ink-faint);margin-top:2px;}
+
+.empty{
+  text-align:center;padding:34px 16px;color:var(--ink-faint);
+}
+.empty .big{font-size:28px;margin-bottom:8px;}
+
+.tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px;}
+.tab{
+  flex:none;background:var(--card2);border:1px solid var(--line2);color:var(--ink-dim);
+  padding:8px 13px;border-radius:20px;font-size:12.5px;font-weight:600;white-space:nowrap;
+}
+.tab.active{background:var(--amber);border-color:var(--amber);color:#1a1206;}
+
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:12px;color:var(--ink-faint);margin-bottom:5px;font-weight:600;}
+.field input,.field select,.field textarea{
+  width:100%;background:var(--card2);border:1px solid var(--line2);border-radius:10px;
+  padding:10px 12px;color:var(--ink);color-scheme:dark;
+}
+.field textarea{min-height:64px;resize:vertical;}
+.field .hint{font-size:11px;color:var(--ink-faint);margin-top:4px;}
+.chip-select{display:flex;flex-wrap:wrap;gap:7px;}
+.chip{
+  background:var(--card2);border:1px solid var(--line2);border-radius:20px;padding:7px 12px;font-size:12.5px;color:var(--ink-dim);
+}
+.chip.on{background:rgba(224,164,88,0.16);border-color:var(--amber);color:var(--amber-soft);font-weight:600;}
+
+/* ---------- Bottom nav ---------- */
+.bottomnav{
+  position:fixed;bottom:0;left:0;right:0;z-index:30;
+  background:rgba(15,19,25,0.96);backdrop-filter:blur(10px);
+  border-top:1px solid var(--line);
+  display:flex;justify-content:space-around;padding:6px 2px calc(6px + env(safe-area-inset-bottom));
+}
+.navbtn{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:none;border:none;color:var(--ink-faint);padding:6px 2px;border-radius:10px;
+  font-size:9.5px;font-weight:700;letter-spacing:0.02em;
+}
+.navbtn .ic{font-size:17px;}
+.navbtn.active{color:var(--amber-soft);}
+
+/* ---------- Modal ---------- */
+.modal-backdrop{
+  position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:50;
+  display:flex;align-items:flex-end;justify-content:center;
+}
+.modal-sheet{
+  background:var(--bg2);border-radius:18px 18px 0 0;border:1px solid var(--line);border-bottom:none;
+  width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:18px 16px calc(24px + env(safe-area-inset-bottom));
+}
+.modal-sheet.center{
+  border-radius:16px;border-bottom:1px solid var(--line);max-width:420px;margin:auto;
+}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.modal-head h2{font-size:17px;}
+.modal-close{background:var(--card2);border:1px solid var(--line2);border-radius:10px;width:32px;height:32px;color:var(--ink-dim);font-size:15px;}
+.modal-actions{display:flex;gap:10px;margin-top:16px;}
+.modal-actions .btn{flex:1;}
+
+.toast{
+  position:fixed;bottom:92px;left:50%;transform:translateX(-50%);
+  background:var(--card2);border:1px solid var(--line2);color:var(--ink);
+  padding:10px 16px;border-radius:24px;font-size:13px;font-weight:600;z-index:60;
+  box-shadow:0 8px 24px rgba(0,0,0,0.35);
+}
+
+.divider{height:1px;background:var(--line);margin:14px 0;}
+.sub-heading{font-size:11px;text-transform:uppercase;letter-spacing:0.09em;color:var(--ink-faint);font-weight:700;margin:16px 0 8px;}
+.progress-bar{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:6px;}
+.progress-bar > div{height:100%;background:var(--teal);}
+.two-col-item{display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid var(--line);}
+.two-col-item:last-child{border-bottom:none;}
+.stopblock{
+  background:linear-gradient(160deg,rgba(224,164,88,0.12),rgba(224,164,88,0.02));
+  border:1px solid rgba(224,164,88,0.32);border-radius:12px;padding:12px 14px;margin-bottom:10px;
+}
+.stopblock .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--amber-soft);font-weight:700;}
+.stopblock .val{font-size:13.5px;margin-top:3px;color:var(--ink);}
+
+@media (min-width:640px){
+  .bottomnav{max-width:560px;left:50%;transform:translateX(-50%);border-radius:16px 16px 0 0;border-left:1px solid var(--line);border-right:1px solid var(--line);}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-row">
+    <div class="brand">
+      <div class="eyebrow" id="brandEyebrow">Asif National</div>
+      <h1 id="pageHeading">Dashboard</h1>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="searchToggleBtn" title="Search">🔍</button>
+      <button class="icon-btn" id="settingsBtn" title="Settings">⚙️</button>
+    </div>
+  </div>
+  <div class="search-bar" id="searchBar" style="display:none;">
+    <input type="text" id="searchInput" placeholder="Search students, subjects, records…">
+    <div class="search-results" id="searchResults" style="display:none;"></div>
+  </div>
+</div>
+
+<main id="view"></main>
+
+<div class="bottomnav" id="bottomNav"></div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script>
+/* =========================================================================
+   TEACHER PLANNER — core.js (storage, ids, time/date, prayer service)
+   ========================================================================= */
+const TZ = 'Asia/Dhaka';
+const DB_KEY = 'tp_db_v1';
+const SUBJECT_DEFAULTS = ['Bangla','English','English 1st Paper','English 2nd Paper','Math','Physics','Chemistry','Biology','Science','Social Science','General Knowledge','Spoken English','মাশক','Other'];
+
+function uid(prefix){
+  const rand = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36)+Math.random().toString(36).slice(2));
+  return (prefix?prefix+'_':'') + rand;
+}
+
+function defaultDB(){
+  return {
+    version:1,
+    settings:{
+      teacherName:'Md. Asif Khan',
+      brand:'Asif National',
+      location:'Rajshahi, Bangladesh',
+      timezone: TZ,
+      city:'Rajshahi', country:'Bangladesh', prayerMethod:1,
+      theme:'dark',
+      onboarded:false
+    },
+    students:[],      // {id,name,nickname,type:'madrasa'|'batch'|'private',class,school,guardianName,guardianPhone,area,subjects:[],monthlyFee,joiningDate,active,notes,createdAt}
+    subjects:[...SUBJECT_DEFAULTS],
+    classRecords:[],  // {id,studentId,subject,date,chapter,topic,page,completed,homework,homeworkDeadline,understanding,weakness,nextTopic,note,createdAt}
+    homework:[],      // {id,studentId,subject,homework,givenDate,dueDate,status,classRecordId}
+    attendance:[],    // {id,studentId,date,status}
+    exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes}
+    fees:[],          // {id,studentId,month,monthlyFee,paid,paymentDate,method,notes}
+    tasks:[],         // {id,title,date,priority,completed,notes}
+    syllabus:[],      // {id,studentId,subject,chapter,topic,status}
+    prayerTimes:{}     // { 'YYYY-MM-DD': {location,maghrib,fetchedAt} }
+  };
+}
+
+let DB = loadDB();
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(DB_KEY);
+    if(!raw) return defaultDB();
+    const parsed = JSON.parse(raw);
+    // shallow-merge to survive schema additions across versions
+    const base = defaultDB();
+    return Object.assign(base, parsed, {
+      settings: Object.assign(base.settings, parsed.settings||{})
+    });
+  }catch(e){
+    console.error('DB load failed, starting fresh', e);
+    return defaultDB();
+  }
+}
+function saveDB(){
+  try{
+    localStorage.setItem(DB_KEY, JSON.stringify(DB));
+  }catch(e){
+    console.error('DB save failed', e);
+    toast('⚠ Could not save — storage may be full');
+  }
+}
+
+/* ---------------- date / time helpers (Asia/Dhaka authoritative) ---------------- */
+function todayISO(){
+  return new Intl.DateTimeFormat('en-CA',{timeZone:TZ}).format(new Date());
+}
+function nowDhakaParts(){
+  const fmt = new Intl.DateTimeFormat('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false});
+  const parts = fmt.formatToParts(new Date());
+  const h = parseInt(parts.find(p=>p.type==='hour').value,10);
+  const m = parseInt(parts.find(p=>p.type==='minute').value,10);
+  return {h,m};
+}
+function nowMinutes(){ const {h,m}=nowDhakaParts(); return h*60+m; }
+function readableDate(iso){
+  const d = new Date(iso+'T12:00:00');
+  return new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(d);
+}
+function weekdayShort(iso){
+  const d = new Date(iso+'T12:00:00');
+  return new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short'}).format(d);
+}
+function parseHHMM(raw){
+  if(!raw) return null;
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(raw).trim());
+  if(!m) return null;
+  const h=parseInt(m[1],10), mi=parseInt(m[2],10);
+  if(h<0||h>23||mi<0||mi>59) return null;
+  return {h,m:mi};
+}
+function toMinutes(t){ return t.h*60+t.m; }
+function fromMinutes(mins){ mins=((mins%1440)+1440)%1440; return {h:Math.floor(mins/60), m:mins%60}; }
+function addMinutes(t,mins){ return fromMinutes(toMinutes(t)+mins); }
+function fmt12(t){ if(!t) return '—'; const period=t.h>=12?'PM':'AM'; let h12=t.h%12; if(h12===0)h12=12; return `${h12}:${String(t.m).padStart(2,'0')} ${period}`; }
+function fmt24(t){ return `${String(t.h).padStart(2,'0')}:${String(t.m).padStart(2,'0')}`; }
+function fmtMoney(n){ n = Number(n)||0; return '৳' + n.toLocaleString('en-IN'); }
+
+/* =========================================================================
+   PRAYER SERVICE — isolated, replaceable. AlAdhan public API, no key needed.
+   ========================================================================= */
+const PrayerService = (function(){
+  function apiDate(iso){ const [y,m,d]=iso.split('-'); return `${d}-${m}-${y}`; }
+
+  async function fetchPrayerTimes(iso){
+    const { city, country, prayerMethod } = DB.settings;
+    const url = `https://api.aladhan.com/v1/timingsByCity/${apiDate(iso)}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&method=${prayerMethod}`;
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(), 8000);
+    try{
+      const res = await fetch(url,{signal:controller.signal});
+      clearTimeout(timer);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const json = await res.json();
+      if(!json || json.code!==200 || !json.data || !json.data.timings || !json.data.timings.Maghrib){
+        throw new Error('Invalid API response');
+      }
+      const parsed = parseHHMM(json.data.timings.Maghrib);
+      if(!parsed) throw new Error('Unparseable Maghrib');
+      return { location: `${city}, ${country}`, maghrib: fmt24(parsed), fetchedAt: new Date().toISOString() };
+    }catch(e){
+      clearTimeout(timer);
+      throw e;
+    }
+  }
+
+  function getCached(iso){ return DB.prayerTimes[iso] || null; }
+  function setCached(iso,data){ DB.prayerTimes[iso]=data; saveDB(); }
+
+  /**
+   * getMaghribTime(iso, {forceRefresh}) -> { maghrib:'HH:MM'|null, source:'api'|'cache'|null, status:'ok'|'warn'|'err', message:string }
+   */
+  async function getMaghribTime(iso, opts){
+    opts = opts||{};
+    const cached = getCached(iso);
+    if(!opts.forceRefresh && cached){
+      // return cache instantly; caller may still trigger a background refresh
+      return { maghrib:cached.maghrib, source:'cache', status:'ok', message:'Loaded from saved prayer time.' };
+    }
+    try{
+      const fresh = await fetchPrayerTimes(iso);
+      setCached(iso, fresh);
+      return { maghrib:fresh.maghrib, source:'api', status:'ok', message:'Prayer time updated from API.' };
+    }catch(e){
+      if(cached){
+        return { maghrib:cached.maghrib, source:'cache', status:'warn', message:'Using saved prayer time — API unavailable.' };
+      }
+      return { maghrib:null, source:null, status:'err', message:'Maghrib time unavailable.' };
+    }
+  }
+
+  return { fetchPrayerTimes, getMaghribTime, getCached };
+})();
+
+/* ---------------- toast ---------------- */
+let toastTimer=null;
+function toast(msg){
+  const root = document.getElementById('toastRoot');
+  root.innerHTML = `<div class="toast">${msg}</div>`;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ root.innerHTML=''; }, 2600);
+}
+
+/* =========================================================================
+   SCHEDULE SERVICE — fixed madrasa/evening blocks + dynamic Safa slot
+   ========================================================================= */
+const FIXED_SCHEDULE = [
+  {start:'08:00',end:'09:00',title:'1st Period — English / Math',note:'Class 3',type:'madrasa'},
+  {start:'09:00',end:'09:30',title:'Spoken English',note:'',type:'madrasa'},
+  {start:'09:30',end:'09:50',title:'মাশক',note:'',type:'madrasa'},
+  {start:'09:50',end:'10:30',title:'3rd Period — Social Science / Science / GK',note:'Class 3',type:'madrasa'},
+  {start:'10:30',end:'10:40',title:'Break',note:'',type:'break'},
+  {start:'10:40',end:'11:20',title:'4th Period — Math',note:'Class 2',type:'madrasa'},
+  {start:'11:20',end:'12:45',title:'5th Period — Math + Bangla / SS / Science / Kitab',note:'',type:'madrasa'},
+  {start:'12:45',end:'13:00',title:'Return home',note:'',type:'transit'},
+  {start:'13:00',end:'15:56',title:'Free / Rest Block',note:'Protected — not auto-filled with work',type:'rest'},
+  {start:'16:00',end:'17:15',title:"4 o'clock Batch",note:'Class 9 · English, Math',type:'batch',studentMatch:{name:"4 o'clock Batch"}},
+  {start:'17:15',end:'18:15',title:'Anika',note:'Class 6 · Private · All subjects',type:'private',studentMatch:{name:'Anika'}},
+];
+
+function buildDaySchedule(iso, maghribHHMM){
+  const items = FIXED_SCHEDULE.map(s=>({...s, startMin:toMinutes(parseHHMM(s.start)), endMin:toMinutes(parseHHMM(s.end))}));
+  let conflict = null;
+  if(maghribHHMM){
+    const maghrib = parseHHMM(maghribHHMM);
+    const gapStart = items.find(i=>i.title.startsWith('Anika')).endMin;
+    items.push({start:fmt24(maghrib),end:fmt24(maghrib),title:'Maghrib',note:'Fetched automatically',type:'maghrib',startMin:toMinutes(maghrib),endMin:toMinutes(maghrib)});
+    const safaStart = addMinutes(maghrib,20);
+    const safaEnd = addMinutes(safaStart,70);
+    items.push({start:fmt24(safaStart),end:fmt24(safaEnd),title:'Safa',note:'Class 9 · Private · Maghrib + 20 min',type:'private',studentMatch:{name:'Safa'},startMin:toMinutes(safaStart),endMin:toMinutes(safaEnd)});
+    // conflict check: Safa start before Anika ends
+    if(toMinutes(safaStart) < gapStart){
+      conflict = `Safa's calculated start (${fmt12(safaStart)}) overlaps Anika's class, which ends at ${fmt12(fromMinutes(gapStart))}.`;
+    }
+  }
+  items.sort((a,b)=>a.startMin-b.startMin);
+  return {items, conflict};
+}
+
+function scheduleStatusFor(item, nowMin){
+  if(item.type==='maghrib') return nowMin>=item.startMin && nowMin < item.startMin+1 ? 'now' : (nowMin>item.startMin?'past':'upcoming');
+  if(nowMin>=item.startMin && nowMin<item.endMin) return 'now';
+  if(nowMin>=item.endMin) return 'past';
+  return 'upcoming';
+}
+
+/* =========================================================================
+   ROUTER + RENDER ENGINE
+   ========================================================================= */
+const NAV_ITEMS = [
+  {id:'dashboard', label:'Dashboard', icon:'🏠'},
+  {id:'today', label:'Today', icon:'🕐'},
+  {id:'students', label:'Students', icon:'🎓'},
+  {id:'study', label:'Study', icon:'📘'},
+  {id:'exams', label:'Exams', icon:'📝'},
+  {id:'fees', label:'Fees', icon:'৳'},
+  {id:'reports', label:'Reports', icon:'📊'},
+];
+let ROUTE = {page:'dashboard', params:{}};
+
+function navigate(page, params){
+  ROUTE = {page, params:params||{}};
+  window.scrollTo(0,0);
+  render();
+}
+
+function renderNav(){
+  const nav = document.getElementById('bottomNav');
+  nav.innerHTML = NAV_ITEMS.map(n=>`
+    <button class="navbtn ${ROUTE.page===n.id?'active':''}" data-nav="${n.id}">
+      <span class="ic">${n.icon}</span><span>${n.label}</span>
+    </button>
+  `).join('');
+  nav.querySelectorAll('[data-nav]').forEach(btn=>{
+    btn.addEventListener('click',()=>navigate(btn.dataset.nav));
+  });
+}
+
+const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', study:'Study Plan', exams:'Exams', fees:'Fees', reports:'Reports', settings:'Settings', studentDetail:'Student'};
+
+function render(){
+  document.getElementById('pageHeading').textContent = PAGE_TITLES[ROUTE.page] || 'Teacher Planner';
+  renderNav();
+  const view = document.getElementById('view');
+
+  if(!DB.settings.onboarded && DB.students.length===0 && ROUTE.page==='dashboard'){
+    view.innerHTML = renderFirstRun();
+    bindFirstRun();
+    return;
+  }
+
+  switch(ROUTE.page){
+    case 'dashboard': view.innerHTML = renderDashboard(); bindDashboard(); break;
+    case 'today': view.innerHTML = renderToday(); bindToday(); break;
+    case 'students': view.innerHTML = renderStudents(); bindStudents(); break;
+    case 'studentDetail': view.innerHTML = renderStudentDetail(ROUTE.params.id, ROUTE.params.tab||'overview'); bindStudentDetail(ROUTE.params.id); break;
+    case 'study': view.innerHTML = renderStudy(); bindStudy(); break;
+    case 'exams': view.innerHTML = renderExams(); bindExams(); break;
+    case 'fees': view.innerHTML = renderFees(); bindFees(); break;
+    case 'reports': view.innerHTML = renderReports(); bindReports(); break;
+    case 'settings': view.innerHTML = renderSettings(); bindSettings(); break;
+    default: view.innerHTML = '<div class="empty">Not found.</div>';
+  }
+}
+
+function renderFirstRun(){
+  return `
+  <div class="card" style="text-align:center;padding:34px 20px;">
+    <div style="font-size:34px;margin-bottom:10px;">📘</div>
+    <h2 style="font-size:20px;margin-bottom:8px;">Welcome to Teacher Planner</h2>
+    <p class="page-sub" style="margin-bottom:20px;">Your personal teaching operating system. Load sample data to explore, or start fresh with your own students.</p>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn primary block" id="loadDemoBtn">Load Demo Data</button>
+      <button class="btn block" id="startFreshBtn">Start Fresh</button>
+    </div>
+  </div>`;
+}
+function bindFirstRun(){
+  document.getElementById('loadDemoBtn').addEventListener('click',()=>{ loadDemoData(); DB.settings.onboarded=true; saveDB(); navigate('dashboard'); toast('Demo data loaded'); });
+  document.getElementById('startFreshBtn').addEventListener('click',()=>{ DB.settings.onboarded=true; saveDB(); navigate('students'); });
+}
+
+/* =========================================================================
+   DATA HELPERS (queries across collections)
+   ========================================================================= */
+function activeStudents(){ return DB.students.filter(s=>s.active!==false); }
+function studentById(id){ return DB.students.find(s=>s.id===id); }
+function lastClassRecord(studentId, subject){
+  const recs = DB.classRecords.filter(r=>r.studentId===studentId && (!subject || r.subject===subject));
+  if(recs.length===0) return null;
+  return recs.slice().sort((a,b)=> (b.date+b.createdAt).localeCompare(a.date+a.createdAt))[0];
+}
+function pendingHomeworkCount(){ return DB.homework.filter(h=>h.status==='Pending'||h.status==='Late').length; }
+function upcomingExams(days){
+  const today = todayISO();
+  const limit = new Date(today); limit.setDate(limit.getDate()+(days||14));
+  const limitISO = limit.toISOString().slice(0,10);
+  return DB.exams.filter(e=>e.date>=today && e.date<=limitISO).sort((a,b)=>a.date.localeCompare(b.date));
+}
+function unpaidFeesCount(monthISO){
+  const month = monthISO || todayISO().slice(0,7);
+  return activeStudents().filter(s=>s.monthlyFee>0).filter(s=>{
+    const f = DB.fees.find(x=>x.studentId===s.id && x.month===month);
+    const paid = f? Number(f.paid||0) : 0;
+    return paid < Number(s.monthlyFee||0);
+  }).length;
+}
+function feeStatusFor(student, monthISO){
+  const month = monthISO || todayISO().slice(0,7);
+  const f = DB.fees.find(x=>x.studentId===student.id && x.month===month);
+  const expected = Number(student.monthlyFee||0);
+  const paid = f? Number(f.paid||0):0;
+  const due = Math.max(0, expected-paid);
+  let status='Due';
+  if(expected===0) status='—';
+  else if(paid>=expected && expected>0) status='Paid';
+  else if(paid>0) status='Partial';
+  return {expected,paid,due,status,record:f};
+}
+function attendanceStatsFor(studentId){
+  const recs = DB.attendance.filter(a=>a.studentId===studentId);
+  const present = recs.filter(a=>a.status==='Present').length;
+  const absent = recs.filter(a=>a.status==='Absent').length;
+  const late = recs.filter(a=>a.status==='Late').length;
+  const cancelled = recs.filter(a=>a.status==='Cancelled').length;
+  const total = present+absent+late;
+  const pct = total>0 ? Math.round(((present+late*0.5)/total)*100) : null;
+  return {present,absent,late,cancelled,total,pct};
+}
+function subjectProgress(studentId, subject){
+  const items = DB.syllabus.filter(s=>s.studentId===studentId && s.subject===subject);
+  if(items.length===0) return null;
+  const done = items.filter(i=>i.status==='Completed').length;
+  return Math.round((done/items.length)*100);
+}
+function examAverage(studentId, subject){
+  const list = DB.exams.filter(e=>e.studentId===studentId && (!subject||e.subject===subject));
+  if(list.length===0) return null;
+  const pct = list.map(e=> e.total>0 ? (e.obtained/e.total*100):0);
+  return Math.round(pct.reduce((a,b)=>a+b,0)/pct.length);
+}
+
+/* =========================================================================
+   DASHBOARD
+   ========================================================================= */
+function renderDashboard(){
+  const iso = todayISO();
+  const {items} = buildDaySchedule(iso, dashboardMaghribCache);
+  const nowMin = nowMinutes();
+  const teaching = items.filter(i=>['madrasa','batch','private'].includes(i.type));
+  const current = teaching.find(i=>scheduleStatusFor(i,nowMin)==='now');
+  const next = teaching.find(i=>i.startMin>nowMin);
+  const hours = teaching.reduce((sum,i)=>sum+(i.endMin-i.startMin),0)/60;
+
+  const pendingHw = pendingHomeworkCount();
+  const exams14 = upcomingExams(14);
+  const unpaid = unpaidFeesCount();
+
+  let nextBlock = '';
+  if(next){
+    const student = matchStudent(next.studentMatch);
+    const lastRec = student ? lastClassRecordAcrossSubjects(student.id) : null;
+    nextBlock = `
+    <div class="card">
+      <div class="card-title">Next Class</div>
+      <div class="row" style="align-items:flex-start;">
+        <div>
+          <div style="font-size:16px;font-weight:700;">${next.title.replace(/ — .*/,'')}</div>
+          <div class="page-sub" style="margin:2px 0 0;">${next.note||''}</div>
+        </div>
+        <div class="badge warn">${fmt12(fromMinutes(next.startMin))}</div>
+      </div>
+      ${lastRec ? `
+      <div class="divider"></div>
+      <div class="stopblock">
+        <div class="lbl">Last time you stopped at</div>
+        <div class="val">${lastRec.subject}: ${[lastRec.chapter,lastRec.topic,lastRec.page].filter(Boolean).join(' → ')||'—'}</div>
+      </div>` : ''}
+      ${student ? `<button class="btn block" data-open-student="${student.id}">Open ${student.name}</button>` : ''}
+    </div>`;
+  }
+
+  const tasksToday = DB.tasks.filter(t=>t.date===iso && !t.completed).slice(0,5);
+
+  return `
+  <div class="page-sub">${readableDate(iso)} · ${DB.settings.location}</div>
+
+  <div class="card">
+    <div class="card-title">Today's Overview</div>
+    <div class="grid3">
+      <div class="stat"><div class="num">${teaching.length}</div><div class="lbl">Classes today</div></div>
+      <div class="stat"><div class="num">${hours.toFixed(1)}h</div><div class="lbl">Teaching hours</div></div>
+      <div class="stat ${current?'hot':''}"><div class="num">${current?'Now':'—'}</div><div class="lbl">${current?current.title.replace(/ — .*/,''):'Free period'}</div></div>
+    </div>
+  </div>
+
+  ${nextBlock}
+
+  <div class="card">
+    <div class="card-title">Quick Stats</div>
+    <div class="grid2">
+      <div class="stat"><div class="num">${activeStudents().length}</div><div class="lbl">Active students</div></div>
+      <div class="stat"><div class="num">${DB.students.length}</div><div class="lbl">Total students</div></div>
+      <div class="stat ${pendingHw>0?'hot':''}"><div class="num">${pendingHw}</div><div class="lbl">Pending homework</div></div>
+      <div class="stat ${exams14.length>0?'hot':''}"><div class="num">${exams14.length}</div><div class="lbl">Upcoming exams</div></div>
+      <div class="stat ${unpaid>0?'hot':''}" style="grid-column:span 2;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees this month</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Today's Tasks</div>
+    ${tasksToday.length? `<div class="list">${tasksToday.map(t=>`
+      <div class="item">
+        <div class="dot" style="background:${t.priority==='High'?'var(--err)':t.priority==='Medium'?'var(--amber)':'var(--ink-faint)'}"></div>
+        <div class="body"><div class="title">${escapeHTML(t.title)}</div><div class="meta">${t.priority} priority</div></div>
+        <button class="btn sm" data-done-task="${t.id}">Done</button>
+      </div>`).join('')}</div>`
+      : `<div class="empty" style="padding:16px;">No tasks for today. <br><button class="btn sm" style="margin-top:8px;" data-nav-page="study">Add one</button></div>`}
+  </div>
+  `;
+}
+let dashboardMaghribCache = null;
+// Guards which date we've already fetched/are fetching for, so re-rendering the
+// dashboard (e.g. from the fetch's own completion) never re-triggers the fetch.
+let dashboardMaghribFetchedFor = null;
+function bindDashboard(){
+  const iso = todayISO();
+  if(dashboardMaghribFetchedFor !== iso){
+    dashboardMaghribFetchedFor = iso; // mark as in-flight BEFORE awaiting, to block duplicate triggers
+    PrayerService.getMaghribTime(iso).then(res=>{
+      dashboardMaghribCache = res.maghrib;
+      if(ROUTE.page==='dashboard'){ render(); }
+    });
+  }
+  document.getElementById('view').querySelectorAll('[data-open-student]').forEach(el=>{
+    el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent}));
+  });
+  document.getElementById('view').querySelectorAll('[data-done-task]').forEach(el=>{
+    el.addEventListener('click',()=>{ const t=DB.tasks.find(x=>x.id===el.dataset.doneTask); if(t){t.completed=true; saveDB(); render();} });
+  });
+  document.getElementById('view').querySelectorAll('[data-nav-page]').forEach(el=>{
+    el.addEventListener('click',()=>navigate(el.dataset.navPage));
+  });
+}
+function matchStudent(matchObj){
+  if(!matchObj) return null;
+  return DB.students.find(s=>s.name===matchObj.name) || null;
+}
+function lastClassRecordAcrossSubjects(studentId){
+  const recs = DB.classRecords.filter(r=>r.studentId===studentId);
+  if(recs.length===0) return null;
+  return recs.slice().sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt))[0];
+}
+
+/* =========================================================================
+   TODAY PAGE
+   ========================================================================= */
+let todayISOState = todayISO();
+let todayMaghribInfo = {maghrib:null,status:'loading',message:'Checking prayer time…'};
+
+function renderToday(){
+  const {items, conflict} = buildDaySchedule(todayISOState, todayMaghribInfo.maghrib);
+  const nowMin = todayISOState===todayISO() ? nowMinutes() : -1;
+
+  return `
+  <div class="row" style="margin-bottom:12px;">
+    <input type="date" id="todayDatePicker" value="${todayISOState}" style="background:var(--card2);border:1px solid var(--line2);border-radius:10px;padding:9px 10px;color:var(--ink);color-scheme:dark;flex:1;">
+    <button class="btn sm" id="todayJumpBtn">Today</button>
+  </div>
+  <div class="page-sub">${readableDate(todayISOState)}</div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="card-title" style="margin-bottom:2px;">Maghrib</div>
+        <div style="font-family:'Fraunces',serif;font-size:24px;">${todayMaghribInfo.maghrib?fmt12(parseHHMM(todayMaghribInfo.maghrib)):'—'}</div>
+      </div>
+      <button class="btn sm" id="refreshMaghribBtn">Refresh</button>
+    </div>
+    <div class="badge ${todayMaghribInfo.status==='ok'?'ok':todayMaghribInfo.status==='warn'?'warn':todayMaghribInfo.status==='err'?'err':'muted'}" style="margin-top:8px;">${todayMaghribInfo.message}</div>
+  </div>
+
+  ${conflict? `<div class="card" style="border-color:rgba(224,122,111,0.5);"><div class="badge err">⚠ Schedule conflict</div><div style="margin-top:8px;font-size:13px;">${conflict}</div></div>` : ''}
+
+  <div class="card" style="padding:6px 14px;">
+    ${items.map(it=>{
+      const status = it.type==='maghrib' ? '' : scheduleStatusFor(it,nowMin);
+      const student = matchStudent(it.studentMatch);
+      const clickable = student ? `data-open-student="${student.id}"` : '';
+      return `
+      <div class="timeline-item ${status==='now'?'now':''}" style="${student?'cursor:pointer;':''}" ${clickable}>
+        <div class="t">${it.type==='maghrib'?fmt12(fromMinutes(it.startMin)):fmt12(fromMinutes(it.startMin))+(it.endMin!==it.startMin?'–'+fmt12(fromMinutes(it.endMin)):'')}</div>
+        <div class="tbody">
+          <div class="ttitle">${it.title}${status==='now'?' · now':''}</div>
+          ${it.note?`<div class="tnote">${it.note}</div>`:''}
+        </div>
+        ${student?'<div class="chev">›</div>':''}
+      </div>`;
+    }).join('')}
+  </div>
+  `;
+}
+
+// Guards which date we've already fetched/are fetching for, so a normal render
+// (including the re-render the fetch itself triggers) never re-triggers a fetch.
+// Only an explicit date change or the Refresh button forces a new call.
+let todayMaghribFetchedFor = null;
+function loadMaghribForToday(force){
+  if(!force && todayMaghribFetchedFor === todayISOState) return; // already fetched/fetching for this date
+  todayMaghribFetchedFor = todayISOState; // mark before awaiting to block duplicate triggers
+  todayMaghribInfo = {maghrib:todayMaghribInfo.maghrib, status:'loading', message:'Checking prayer time…'};
+  PrayerService.getMaghribTime(todayISOState, {forceRefresh:force}).then(res=>{
+    todayMaghribInfo = res;
+    if(ROUTE.page==='today') render();
+  });
+}
+
+function bindToday(){
+  loadMaghribForToday(false);
+  const view = document.getElementById('view');
+  view.querySelector('#todayDatePicker').addEventListener('change', e=>{
+    todayISOState = e.target.value || todayISO();
+    render();
+  });
+  view.querySelector('#todayJumpBtn').addEventListener('click', ()=>{
+    todayISOState = todayISO();
+    render();
+  });
+  const rf = view.querySelector('#refreshMaghribBtn');
+  if(rf) rf.addEventListener('click', ()=>loadMaghribForToday(true));
+  view.querySelectorAll('[data-open-student]').forEach(el=>{
+    el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent}));
+  });
+}
+function escapeHTML(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* =========================================================================
+   STUDENTS — list
+   ========================================================================= */
+let studentsFilter = 'all';
+function renderStudents(){
+  const filters = [['all','All'],['madrasa','Madrasa'],['batch','Batches'],['private','Private']];
+  let list = DB.students.slice();
+  if(studentsFilter!=='all') list = list.filter(s=>s.type===studentsFilter);
+  list.sort((a,b)=> (b.active!==false) - (a.active!==false) || a.name.localeCompare(b.name));
+
+  return `
+  <div class="tabs">
+    ${filters.map(([id,label])=>`<div class="tab ${studentsFilter===id?'active':''}" data-filter="${id}">${label}</div>`).join('')}
+  </div>
+  <button class="btn primary block" id="addStudentBtn" style="margin-bottom:14px;">+ Add Student / Batch</button>
+  ${list.length===0? `<div class="empty"><div class="big">🎓</div>No students yet.</div>` : `
+  <div class="list">
+    ${list.map(s=>{
+      const fee = feeStatusFor(s);
+      return `
+      <div class="item" data-open="${s.id}">
+        <div class="dot" style="background:${s.active===false?'var(--ink-faint)':typeColor(s.type)}"></div>
+        <div class="body">
+          <div class="title">${escapeHTML(s.name)} ${s.active===false?'<span class="badge muted">Inactive</span>':''}</div>
+          <div class="meta">${typeLabel(s.type)} · Class ${escapeHTML(s.class||'—')} ${fee.expected>0?`· <span style="color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</span>`:''}</div>
+        </div>
+        <div class="chev">›</div>
+      </div>`;
+    }).join('')}
+  </div>`}
+  `;
+}
+function typeLabel(t){ return t==='madrasa'?'Madrasa':t==='batch'?'Batch':'Private'; }
+function typeColor(t){ return t==='madrasa'?'var(--blue)':t==='batch'?'var(--teal)':'var(--amber)'; }
+
+function bindStudents(){
+  const view = document.getElementById('view');
+  view.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{studentsFilter=el.dataset.filter; render();}));
+  view.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.open})));
+  document.getElementById('addStudentBtn').addEventListener('click',()=>openStudentForm());
+}
+
+/* =========================================================================
+   STUDENT DETAIL
+   ========================================================================= */
+const STUDENT_TABS = [['overview','Overview'],['records','Class Records'],['homework','Homework'],['attendance','Attendance'],['exams','Exams'],['fees','Fees'],['syllabus','Progress']];
+
+function renderStudentDetail(id, tab){
+  const s = studentById(id);
+  if(!s) return `<div class="empty">Student not found.</div>`;
+  let body='';
+  if(tab==='overview') body = studentOverviewTab(s);
+  else if(tab==='records') body = studentRecordsTab(s);
+  else if(tab==='homework') body = studentHomeworkTab(s);
+  else if(tab==='attendance') body = studentAttendanceTab(s);
+  else if(tab==='exams') body = studentExamsTab(s);
+  else if(tab==='fees') body = studentFeesTab(s);
+  else if(tab==='syllabus') body = studentSyllabusTab(s);
+
+  return `
+  <button class="btn sm ghost" id="backToStudents" style="margin-bottom:10px;">‹ Students</button>
+  <div class="row" style="align-items:flex-start;margin-bottom:6px;">
+    <div>
+      <h2 style="font-size:19px;">${escapeHTML(s.name)}</h2>
+      <div class="page-sub" style="margin:2px 0 0;">${typeLabel(s.type)} · Class ${escapeHTML(s.class||'—')}${s.school?' · '+escapeHTML(s.school):''}</div>
+    </div>
+    <button class="icon-btn" id="editStudentBtn">✎</button>
+  </div>
+  <div class="tabs">
+    ${STUDENT_TABS.map(([id2,label])=>`<div class="tab ${tab===id2?'active':''}" data-tab="${id2}">${label}</div>`).join('')}
+  </div>
+  ${body}
+  `;
+}
+
+function studentOverviewTab(s){
+  const subjects = s.subjects && s.subjects.length ? s.subjects : ['General'];
+  const fee = feeStatusFor(s);
+  const att = attendanceStatsFor(s.id);
+  return `
+  <div class="card">
+    <div class="card-title">Last Stopping Point — by subject</div>
+    ${subjects.map(subj=>{
+      const rec = lastClassRecord(s.id, subj);
+      return `
+      <div class="stopblock">
+        <div class="lbl">${escapeHTML(subj)}</div>
+        ${rec? `
+          <div class="val">${[rec.chapter,rec.topic,rec.page].filter(Boolean).join(' → ')||'—'}</div>
+          <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">HOMEWORK: ${escapeHTML(rec.homework||'—')}</div>
+          <div style="font-size:11.5px;color:var(--ink-faint);">NEXT: ${escapeHTML(rec.nextTopic||'—')}</div>
+        ` : `<div class="val" style="color:var(--ink-faint);">No class recorded yet.</div>`}
+      </div>`;
+    }).join('')}
+    <button class="btn primary block" data-quick-record="${s.id}" style="margin-top:6px;">+ Record Today's Class</button>
+  </div>
+  <div class="grid2">
+    <div class="card"><div class="card-title">Attendance</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;">${att.pct!==null?att.pct+'%':'—'}</div><div class="page-sub">Present ${att.present} · Absent ${att.absent} · Late ${att.late}</div></div>
+    <div class="card"><div class="card-title">Fee (this month)</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">${fee.expected>0?`Due ${fmtMoney(fee.due)}`:'No fee set'}</div></div>
+  </div>
+  ${s.guardianPhone||s.notes? `<div class="card"><div class="card-title">Notes</div>${s.notes?`<div style="margin-bottom:8px;">${escapeHTML(s.notes)}</div>`:''}${s.guardianPhone?`<div class="page-sub">Guardian: ${escapeHTML(s.guardianName||'')} ${s.guardianPhone?' · '+escapeHTML(s.guardianPhone):''}</div>`:''}</div>`:''}
+  `;
+}
+
+function studentRecordsTab(s){
+  const recs = DB.classRecords.filter(r=>r.studentId===s.id).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
+  return `
+  <button class="btn primary block" data-add-record="${s.id}" style="margin-bottom:12px;">+ New Class Record</button>
+  ${recs.length===0? `<div class="empty">No class records yet.</div>` : `
+  <div class="list">
+    ${recs.map(r=>`
+      <div class="card" style="padding:12px 14px;margin-bottom:10px;">
+        <div class="row"><div class="badge muted">${escapeHTML(r.subject)}</div><div class="page-sub" style="margin:0;">${r.date}</div></div>
+        <div style="margin-top:8px;font-size:13.5px;"><b>Covered:</b> ${[r.chapter,r.topic,r.page].filter(Boolean).join(' → ')||'—'}</div>
+        ${r.completed?`<div style="font-size:13px;color:var(--ink-dim);margin-top:4px;">${escapeHTML(r.completed)}</div>`:''}
+        <div style="font-size:12.5px;color:var(--ink-faint);margin-top:6px;">Homework: ${escapeHTML(r.homework||'—')} ${r.homeworkDeadline?'(due '+r.homeworkDeadline+')':''}</div>
+        <div style="font-size:12.5px;color:var(--ink-faint);">Next: ${escapeHTML(r.nextTopic||'—')}</div>
+        ${r.weakness?`<div style="font-size:12.5px;color:var(--err);margin-top:4px;">Weakness: ${escapeHTML(r.weakness)}</div>`:''}
+        <div style="margin-top:8px;display:flex;gap:8px;">
+          <button class="btn sm ghost" data-del-record="${r.id}">Delete</button>
+        </div>
+      </div>
+    `).join('')}
+  </div>`}
+  `;
+}
+
+function studentHomeworkTab(s){
+  const hw = DB.homework.filter(h=>h.studentId===s.id).sort((a,b)=>b.dueDate.localeCompare(a.dueDate));
+  return `
+  <button class="btn primary block" data-add-hw="${s.id}" style="margin-bottom:12px;">+ Assign Homework</button>
+  ${hw.length===0? `<div class="empty">No homework recorded.</div>` : `
+  <div class="list">
+    ${hw.map(h=>`
+      <div class="item">
+        <div class="dot" style="background:${hwColor(h.status)}"></div>
+        <div class="body">
+          <div class="title">${escapeHTML(h.subject)}: ${escapeHTML(h.homework)}</div>
+          <div class="meta">Due ${h.dueDate} · ${h.status}</div>
+        </div>
+        <select data-hw-status="${h.id}" style="background:var(--card2);border:1px solid var(--line2);border-radius:8px;padding:4px 6px;font-size:11.5px;">
+          ${['Pending','Submitted','Checked','Late','Missing'].map(st=>`<option value="${st}" ${h.status===st?'selected':''}>${st}</option>`).join('')}
+        </select>
+      </div>
+    `).join('')}
+  </div>`}
+  `;
+}
+function hwColor(status){ return {Pending:'var(--amber)',Submitted:'var(--blue)',Checked:'var(--ok)',Late:'var(--err)',Missing:'var(--err)'}[status]||'var(--ink-faint)'; }
+
+function studentAttendanceTab(s){
+  const att = attendanceStatsFor(s.id);
+  const recs = DB.attendance.filter(a=>a.studentId===s.id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30);
+  return `
+  <div class="card">
+    <div class="card-title">Summary</div>
+    <div class="grid3">
+      <div class="stat"><div class="num">${att.present}</div><div class="lbl">Present</div></div>
+      <div class="stat"><div class="num">${att.absent}</div><div class="lbl">Absent</div></div>
+      <div class="stat"><div class="num">${att.pct!==null?att.pct+'%':'—'}</div><div class="lbl">Rate</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Mark Today</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${['Present','Absent','Late','Cancelled'].map(st=>`<button class="btn sm" data-mark-att="${s.id}|${st}">${st}</button>`).join('')}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Recent</div>
+    ${recs.length===0?`<div class="page-sub">No attendance marked yet.</div>`:`<div class="list">${recs.map(a=>`
+      <div class="two-col-item"><span>${a.date}</span><span class="badge ${a.status==='Present'?'ok':a.status==='Absent'?'err':'warn'}">${a.status}</span></div>
+    `).join('')}</div>`}
+  </div>
+  `;
+}
+
+function studentExamsTab(s){
+  const exams = DB.exams.filter(e=>e.studentId===s.id).sort((a,b)=>b.date.localeCompare(a.date));
+  const avg = examAverage(s.id);
+  return `
+  <button class="btn primary block" data-add-exam="${s.id}" style="margin-bottom:12px;">+ Add Exam</button>
+  ${avg!==null?`<div class="card"><div class="card-title">Average</div><div style="font-family:'Fraunces',serif;font-size:26px;">${avg}%</div></div>`:''}
+  ${exams.length===0? `<div class="empty">No exams recorded.</div>` : `<div class="list">${exams.map(e=>{
+    const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
+    return `<div class="item">
+      <div class="dot" style="background:${pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(e.name)} · ${escapeHTML(e.subject)}</div><div class="meta">${e.date} · ${e.obtained}/${e.total} = ${pct}%</div></div>
+    </div>`;
+  }).join('')}</div>`}
+  `;
+}
+
+function studentFeesTab(s){
+  const months = lastNMonths(6);
+  return `
+  <div class="card"><div class="card-title">Monthly Fee</div><div style="font-family:'Fraunces',serif;font-size:24px;">${fmtMoney(s.monthlyFee||0)}</div></div>
+  <div class="list">
+  ${months.map(m=>{
+    const f = feeStatusFor(s,m);
+    return `
+    <div class="card" style="padding:12px 14px;margin-bottom:10px;">
+      <div class="row"><b>${monthLabel(m)}</b><span class="badge ${f.status==='Paid'?'ok':f.status==='Partial'?'warn':'err'}">${f.status}</span></div>
+      <div class="page-sub" style="margin-top:4px;">Paid ${fmtMoney(f.paid)} of ${fmtMoney(f.expected)} · Due ${fmtMoney(f.due)}</div>
+      ${f.expected>0?`<button class="btn sm" style="margin-top:8px;" data-mark-paid="${s.id}|${m}">Mark fully paid</button>`:''}
+    </div>`;
+  }).join('')}
+  </div>
+  `;
+}
+function lastNMonths(n){
+  const arr=[]; const d=new Date(todayISO()+'T12:00:00');
+  for(let i=0;i<n;i++){ const y=d.getFullYear(),m=d.getMonth()+1-i; const dd=new Date(y,m-1,1); arr.push(dd.toISOString().slice(0,7)); }
+  return arr;
+}
+function monthLabel(m){ const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
+
+function studentSyllabusTab(s){
+  const subjects = s.subjects && s.subjects.length? s.subjects:['General'];
+  return `
+  <button class="btn primary block" data-add-syllabus="${s.id}" style="margin-bottom:12px;">+ Add Syllabus Item</button>
+  ${subjects.map(subj=>{
+    const items = DB.syllabus.filter(x=>x.studentId===s.id && x.subject===subj);
+    const prog = subjectProgress(s.id, subj);
+    return `
+    <div class="card">
+      <div class="row"><div class="card-title" style="margin:0;">${escapeHTML(subj)}</div>${prog!==null?`<span class="page-sub" style="margin:0;">${prog}%</span>`:''}</div>
+      ${prog!==null?`<div class="progress-bar"><div style="width:${prog}%;"></div></div>`:''}
+      ${items.length===0? `<div class="page-sub" style="margin-top:8px;">No syllabus items yet.</div>` : `
+      <div style="margin-top:10px;">${items.map(it=>`
+        <div class="two-col-item">
+          <span>${escapeHTML(it.chapter)}${it.topic?' — '+escapeHTML(it.topic):''}</span>
+          <select data-syllabus-status="${it.id}" style="background:var(--card2);border:1px solid var(--line2);border-radius:8px;padding:3px 5px;font-size:11px;">
+            ${['Not Started','In Progress','Completed','Revision'].map(st=>`<option ${it.status===st?'selected':''}>${st}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      </div>`}
+    </div>`;
+  }).join('')}
+  `;
+}
+
+function bindStudentDetail(id){
+  const view = document.getElementById('view');
+  view.querySelector('#backToStudents').addEventListener('click',()=>navigate('students'));
+  view.querySelector('#editStudentBtn').addEventListener('click',()=>openStudentForm(id));
+  view.querySelectorAll('[data-tab]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id,tab:el.dataset.tab})));
+  const qr = view.querySelector('[data-quick-record]'); if(qr) qr.addEventListener('click',()=>openRecordForm(id));
+  const ar = view.querySelector('[data-add-record]'); if(ar) ar.addEventListener('click',()=>openRecordForm(id));
+  view.querySelectorAll('[data-del-record]').forEach(el=>el.addEventListener('click',()=>{
+    if(confirm('Delete this class record?')){ DB.classRecords = DB.classRecords.filter(r=>r.id!==el.dataset.delRecord); saveDB(); render(); toast('Record deleted'); }
+  }));
+  const ah = view.querySelector('[data-add-hw]'); if(ah) ah.addEventListener('click',()=>openHomeworkForm(id));
+  view.querySelectorAll('[data-hw-status]').forEach(el=>el.addEventListener('change',()=>{
+    const h = DB.homework.find(x=>x.id===el.dataset.hwStatus); h.status=el.value; saveDB(); toast('Homework updated');
+  }));
+  view.querySelectorAll('[data-mark-att]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,status]=el.dataset.markAtt.split('|');
+    DB.attendance.push({id:uid('att'),studentId:sid,date:todayISO(),status});
+    saveDB(); render(); toast('Attendance marked: '+status);
+  }));
+  const ae = view.querySelector('[data-add-exam]'); if(ae) ae.addEventListener('click',()=>openExamForm(id));
+  view.querySelectorAll('[data-mark-paid]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,month]=el.dataset.markPaid.split('|');
+    const student = studentById(sid);
+    let f = DB.fees.find(x=>x.studentId===sid && x.month===month);
+    if(!f){ f={id:uid('fee'),studentId:sid,month,monthlyFee:student.monthlyFee,paid:0,paymentDate:null,method:'Cash',notes:''}; DB.fees.push(f); }
+    f.paid = student.monthlyFee; f.paymentDate = todayISO(); f.status='Paid';
+    saveDB(); render(); toast('Marked as fully paid');
+  }));
+  const asy = view.querySelector('[data-add-syllabus]'); if(asy) asy.addEventListener('click',()=>openSyllabusForm(id));
+  view.querySelectorAll('[data-syllabus-status]').forEach(el=>el.addEventListener('change',()=>{
+    const it = DB.syllabus.find(x=>x.id===el.dataset.syllabusStatus); it.status=el.value; saveDB(); toast('Progress updated');
+  }));
+}
+
+/* =========================================================================
+   STUDY PLAN (weekly planner + personal tasks)
+   ========================================================================= */
+const WEEKDAYS = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
+function renderStudy(){
+  const tasks = DB.tasks.slice().sort((a,b)=> (a.completed-b.completed) || a.date.localeCompare(b.date));
+  return `
+  <div class="sub-heading">Weekly Study Plan</div>
+  <button class="btn primary block" id="addPlanBtn" style="margin-bottom:12px;">+ Add Plan Entry</button>
+  <div class="list" style="margin-bottom:20px;">
+  ${WEEKDAYS.map(day=>{
+    const entries = DB.classRecords.filter(r=>false); // placeholder not used
+    const planEntries = (DB.studyPlan||[]).filter(p=>p.day===day);
+    return `
+    <div class="card" style="padding:12px 14px;">
+      <div class="card-title" style="margin-bottom:8px;">${day}</div>
+      ${planEntries.length===0? `<div class="page-sub">Nothing planned. ${suggestForDay(day)}</div>` : planEntries.map(p=>`
+        <div class="two-col-item"><span>${escapeHTML(p.student)} · ${escapeHTML(p.subject)}: ${escapeHTML(p.topic)}</span><button class="btn sm ghost" data-del-plan="${p.id}">✕</button></div>
+      `).join('')}
+    </div>`;
+  }).join('')}
+  </div>
+
+  <div class="sub-heading">Personal Tasks</div>
+  <button class="btn primary block" id="addTaskBtn" style="margin-bottom:12px;">+ Add Task</button>
+  ${tasks.length===0? `<div class="empty">No personal tasks yet.</div>` : `
+  <div class="list">
+  ${tasks.map(t=>`
+    <div class="item">
+      <div class="dot" style="background:${t.completed?'var(--ok)':t.priority==='High'?'var(--err)':t.priority==='Medium'?'var(--amber)':'var(--ink-faint)'}"></div>
+      <div class="body"><div class="title" style="${t.completed?'text-decoration:line-through;color:var(--ink-faint);':''}">${escapeHTML(t.title)}</div><div class="meta">${t.date} · ${t.priority}</div></div>
+      <button class="btn sm" data-toggle-task="${t.id}">${t.completed?'Undo':'Done'}</button>
+    </div>
+  `).join('')}
+  </div>`}
+  `;
+}
+function suggestForDay(day){
+  // lightweight suggestion using most recent class record's nextTopic, so the teacher isn't forced to plan from scratch
+  const recent = DB.classRecords.slice().sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt))[0];
+  if(recent && recent.nextTopic){
+    const st = studentById(recent.studentId);
+    return `Suggestion: continue ${st?st.name:''} ${recent.subject} — ${recent.nextTopic}`;
+  }
+  return '';
+}
+function bindStudy(){
+  const view = document.getElementById('view');
+  document.getElementById('addPlanBtn').addEventListener('click',()=>openPlanForm());
+  document.getElementById('addTaskBtn').addEventListener('click',()=>openTaskForm());
+  view.querySelectorAll('[data-del-plan]').forEach(el=>el.addEventListener('click',()=>{
+    DB.studyPlan = (DB.studyPlan||[]).filter(p=>p.id!==el.dataset.delPlan); saveDB(); render();
+  }));
+  view.querySelectorAll('[data-toggle-task]').forEach(el=>el.addEventListener('click',()=>{
+    const t = DB.tasks.find(x=>x.id===el.dataset.toggleTask); t.completed=!t.completed; saveDB(); render();
+  }));
+}
+
+/* =========================================================================
+   EXAMS (global)
+   ========================================================================= */
+function renderExams(){
+  const exams = DB.exams.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  return `
+  <button class="btn primary block" id="addExamGlobalBtn" style="margin-bottom:12px;">+ Add Exam</button>
+  ${exams.length===0? `<div class="empty"><div class="big">📝</div>No exams recorded yet.</div>` : `
+  <div class="list">
+  ${exams.map(e=>{
+    const st = studentById(e.studentId);
+    const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
+    return `<div class="item" data-open-student="${e.studentId}">
+      <div class="dot" style="background:${pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(e.name)} — ${st?escapeHTML(st.name):'?'}</div><div class="meta">${escapeHTML(e.subject)} · ${e.date} · ${e.obtained}/${e.total} (${pct}%)</div></div>
+      <div class="chev">›</div>
+    </div>`;
+  }).join('')}
+  </div>`}
+  `;
+}
+function bindExams(){
+  const view = document.getElementById('view');
+  document.getElementById('addExamGlobalBtn').addEventListener('click',()=>openExamForm());
+  view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent,tab:'exams'})));
+}
+
+/* =========================================================================
+   FEES (global dashboard)
+   ========================================================================= */
+let feesMonth = todayISO().slice(0,7);
+function renderFees(){
+  const students = activeStudents().filter(s=>s.monthlyFee>0);
+  let expected=0, collected=0;
+  students.forEach(s=>{ const f=feeStatusFor(s,feesMonth); expected+=f.expected; collected+=f.paid; });
+  const due = expected-collected;
+  return `
+  <div class="field" style="margin-bottom:6px;"><input type="month" id="feesMonthPicker" value="${feesMonth}"></div>
+  <div class="card">
+    <div class="grid3">
+      <div class="stat"><div class="num">${fmtMoney(expected)}</div><div class="lbl">Expected</div></div>
+      <div class="stat"><div class="num">${fmtMoney(collected)}</div><div class="lbl">Collected</div></div>
+      <div class="stat ${due>0?'hot':''}"><div class="num">${fmtMoney(due)}</div><div class="lbl">Due</div></div>
+    </div>
+  </div>
+  ${students.length===0? `<div class="empty">No students with a monthly fee set.</div>` : `
+  <div class="list">
+  ${students.map(s=>{
+    const f = feeStatusFor(s,feesMonth);
+    return `<div class="item" data-open-student="${s.id}">
+      <div class="dot" style="background:${f.status==='Paid'?'var(--ok)':f.status==='Partial'?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(s.name)}</div><div class="meta">Paid ${fmtMoney(f.paid)} / ${fmtMoney(f.expected)}</div></div>
+      <span class="badge ${f.status==='Paid'?'ok':f.status==='Partial'?'warn':'err'}">${f.status}</span>
+    </div>`;
+  }).join('')}
+  </div>`}
+  `;
+}
+function bindFees(){
+  const view = document.getElementById('view');
+  view.querySelector('#feesMonthPicker').addEventListener('change', e=>{ feesMonth=e.target.value||feesMonth; render(); });
+  view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent,tab:'fees'})));
+}
+
+/* =========================================================================
+   REPORTS
+   ========================================================================= */
+function renderReports(){
+  const month = todayISO().slice(0,7);
+  const classesTaken = DB.classRecords.filter(r=>r.date.startsWith(month)).length;
+  const examsThisMonth = DB.exams.filter(e=>e.date.startsWith(month)).length;
+  let collected=0, dueTotal=0;
+  activeStudents().filter(s=>s.monthlyFee>0).forEach(s=>{ const f=feeStatusFor(s,month); collected+=f.paid; dueTotal+=f.due; });
+
+  return `
+  <div class="card">
+    <div class="card-title">Monthly Teaching Report — ${monthLabel(month)}</div>
+    <div class="two-col-item"><span>Classes recorded</span><b>${classesTaken}</b></div>
+    <div class="two-col-item"><span>Active students</span><b>${activeStudents().length}</b></div>
+    <div class="two-col-item"><span>Exams held</span><b>${examsThisMonth}</b></div>
+    <div class="two-col-item"><span>Fees collected</span><b>${fmtMoney(collected)}</b></div>
+    <div class="two-col-item"><span>Fees due</span><b>${fmtMoney(dueTotal)}</b></div>
+  </div>
+
+  <div class="sub-heading">Student Reports</div>
+  <div class="list">
+  ${DB.students.map(s=>{
+    const att = attendanceStatsFor(s.id);
+    const avg = examAverage(s.id);
+    return `<div class="item" data-open-student="${s.id}">
+      <div class="dot" style="background:${typeColor(s.type)}"></div>
+      <div class="body"><div class="title">${escapeHTML(s.name)}</div><div class="meta">Attendance ${att.pct!==null?att.pct+'%':'—'} · Exam avg ${avg!==null?avg+'%':'—'}</div></div>
+      <div class="chev">›</div>
+    </div>`;
+  }).join('')}
+  </div>
+  `;
+}
+function bindReports(){
+  document.getElementById('view').querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent})));
+}
+
+/* =========================================================================
+   SETTINGS
+   ========================================================================= */
+function renderSettings(){
+  const st = DB.settings;
+  return `
+  <div class="card">
+    <div class="card-title">Profile</div>
+    <div class="field"><label>Teacher name</label><input id="setName" value="${escapeHTML(st.teacherName)}"></div>
+    <div class="field"><label>Brand name</label><input id="setBrand" value="${escapeHTML(st.brand)}"></div>
+    <div class="field"><label>Location</label><input id="setLocation" value="${escapeHTML(st.location)}"></div>
+    <div class="grid2">
+      <div class="field"><label>City (for prayer API)</label><input id="setCity" value="${escapeHTML(st.city)}"></div>
+      <div class="field"><label>Country</label><input id="setCountry" value="${escapeHTML(st.country)}"></div>
+    </div>
+    <button class="btn primary block" id="saveSettingsBtn">Save Profile</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Subjects</div>
+    <div class="chip-select">${DB.subjects.map(sub=>`<span class="chip">${escapeHTML(sub)} <a href="#" data-del-subject="${escapeHTML(sub)}" style="opacity:.6;margin-left:4px;">✕</a></span>`).join('')}</div>
+    <div class="field" style="margin-top:12px;"><label>Add subject</label><div class="row"><input id="newSubjectInput" placeholder="e.g. Arabic" style="flex:1;"><button class="btn sm" id="addSubjectBtn">Add</button></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Data</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn block" id="exportBtn">Export Backup (JSON)</button>
+      <label class="btn block" style="text-align:center;" id="importLabel">Import Backup
+        <input type="file" id="importFile" accept="application/json" style="display:none;">
+      </label>
+      ${DB.students.length===0? `<button class="btn block" id="loadDemoBtn2">Load Demo Data</button>`:''}
+      <button class="btn danger block" id="resetBtn">Reset All Data</button>
+    </div>
+  </div>
+  <div class="page-sub" style="text-align:center;">Teacher Planner v1 · Data stored locally on this device</div>
+  `;
+}
+function bindSettings(){
+  const view = document.getElementById('view');
+  document.getElementById('saveSettingsBtn').addEventListener('click',()=>{
+    DB.settings.teacherName = view.querySelector('#setName').value.trim() || DB.settings.teacherName;
+    DB.settings.brand = view.querySelector('#setBrand').value.trim() || DB.settings.brand;
+    DB.settings.location = view.querySelector('#setLocation').value.trim() || DB.settings.location;
+    DB.settings.city = view.querySelector('#setCity').value.trim() || DB.settings.city;
+    DB.settings.country = view.querySelector('#setCountry').value.trim() || DB.settings.country;
+    saveDB(); document.getElementById('brandEyebrow').textContent = DB.settings.brand;
+    toast('Profile saved');
+  });
+  view.querySelectorAll('[data-del-subject]').forEach(el=>el.addEventListener('click',(ev)=>{
+    ev.preventDefault();
+    DB.subjects = DB.subjects.filter(s=>s!==el.dataset.delSubject); saveDB(); render();
+  }));
+  document.getElementById('addSubjectBtn').addEventListener('click',()=>{
+    const v = view.querySelector('#newSubjectInput').value.trim();
+    if(v && !DB.subjects.includes(v)){ DB.subjects.push(v); saveDB(); render(); }
+  });
+  document.getElementById('exportBtn').addEventListener('click', exportBackup);
+  document.getElementById('importFile').addEventListener('change', importBackup);
+  const demoBtn2 = document.getElementById('loadDemoBtn2');
+  if(demoBtn2) demoBtn2.addEventListener('click',()=>{ loadDemoData(); render(); toast('Demo data loaded'); });
+  document.getElementById('resetBtn').addEventListener('click',()=>{
+    if(confirm('This will permanently delete ALL data on this device. Continue?')){
+      if(confirm('Are you absolutely sure? This cannot be undone.')){
+        localStorage.removeItem(DB_KEY); DB = defaultDB(); saveDB(); navigate('dashboard'); toast('All data reset');
+      }
+    }
+  });
+}
+function exportBackup(){
+  const blob = new Blob([JSON.stringify(DB,null,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `teacher-planner-backup-${todayISO()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast('Backup exported');
+}
+function importBackup(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const parsed = JSON.parse(reader.result);
+      if(!parsed || typeof parsed!=='object' || !Array.isArray(parsed.students)){
+        throw new Error('Not a valid backup file');
+      }
+      if(!confirm('This will replace all current data with the backup. Continue?')) return;
+      DB = Object.assign(defaultDB(), parsed, {settings:Object.assign(defaultDB().settings, parsed.settings||{})});
+      saveDB();
+      navigate('dashboard');
+      toast('Backup restored');
+    }catch(err){
+      alert('Import failed: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+/* =========================================================================
+   MODAL SYSTEM
+   ========================================================================= */
+function openModal(innerHTML, opts){
+  opts = opts||{};
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="modal-backdrop" id="modalBackdrop">
+      <div class="modal-sheet ${opts.center?'center':''}" id="modalSheet">${innerHTML}</div>
+    </div>`;
+  document.getElementById('modalBackdrop').addEventListener('click', e=>{ if(e.target.id==='modalBackdrop') closeModal(); });
+  const closeBtn = root.querySelector('.modal-close');
+  if(closeBtn) closeBtn.addEventListener('click', closeModal);
+  if(opts.onMount) opts.onMount(root);
+}
+function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
+
+function modalHead(title){
+  return `<div class="modal-head"><h2>${title}</h2><button class="modal-close">✕</button></div>`;
+}
+
+/* ---------- Student form ---------- */
+function openStudentForm(id){
+  const s = id ? studentById(id) : null;
+  const subjectsChecked = s ? (s.subjects||[]) : [];
+  openModal(`
+    ${modalHead(s?'Edit Student':'Add Student / Batch')}
+    <div class="field"><label>Name</label><input id="f_name" value="${s?escapeHTML(s.name):''}" placeholder="e.g. Safa or 4 o'clock Batch"></div>
+    <div class="grid2">
+      <div class="field"><label>Type</label>
+        <select id="f_type">
+          ${[['madrasa','Madrasa student'],['batch','Batch'],['private','Private student']].map(([v,l])=>`<option value="${v}" ${s&&s.type===v?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Class</label><input id="f_class" value="${s?escapeHTML(s.class||''):''}"></div>
+    </div>
+    <div class="field"><label>School / Madrasa</label><input id="f_school" value="${s?escapeHTML(s.school||''):''}"></div>
+    <div class="field"><label>Subjects</label>
+      <div class="chip-select" id="f_subjects">
+        ${DB.subjects.map(sub=>`<span class="chip ${subjectsChecked.includes(sub)?'on':''}" data-chip="${escapeHTML(sub)}">${escapeHTML(sub)}</span>`).join('')}
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Guardian name</label><input id="f_gname" value="${s?escapeHTML(s.guardianName||''):''}"></div>
+      <div class="field"><label>Guardian phone</label><input id="f_gphone" value="${s?escapeHTML(s.guardianPhone||''):''}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Area</label><input id="f_area" value="${s?escapeHTML(s.area||''):''}"></div>
+      <div class="field"><label>Monthly fee (৳)</label><input id="f_fee" type="number" value="${s?s.monthlyFee||'':''}"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="f_notes">${s?escapeHTML(s.notes||''):''}</textarea></div>
+    ${s? `<div class="field"><label><input type="checkbox" id="f_active" ${s.active!==false?'checked':''} style="width:auto;margin-right:6px;">Active</label></div>`:''}
+    <div class="modal-actions">
+      ${s?`<button class="btn danger" id="delStudentBtn">Delete</button>`:''}
+      <button class="btn primary" id="saveStudentBtn">Save</button>
+    </div>
+  `, {onMount:(root)=>{
+    root.querySelectorAll('[data-chip]').forEach(chip=>chip.addEventListener('click',()=>chip.classList.toggle('on')));
+    root.querySelector('#saveStudentBtn').addEventListener('click',()=>{
+      const name = root.querySelector('#f_name').value.trim();
+      if(!name){ alert('Name is required'); return; }
+      const subjects = Array.from(root.querySelectorAll('[data-chip].on')).map(c=>c.dataset.chip);
+      const data = {
+        name, type: root.querySelector('#f_type').value, class: root.querySelector('#f_class').value.trim(),
+        school: root.querySelector('#f_school').value.trim(), subjects,
+        guardianName: root.querySelector('#f_gname').value.trim(), guardianPhone: root.querySelector('#f_gphone').value.trim(),
+        area: root.querySelector('#f_area').value.trim(), monthlyFee: Number(root.querySelector('#f_fee').value)||0,
+        notes: root.querySelector('#f_notes').value.trim()
+      };
+      if(s){
+        Object.assign(s, data);
+        s.active = root.querySelector('#f_active') ? root.querySelector('#f_active').checked : true;
+      }else{
+        DB.students.push(Object.assign({id:uid('stu'), joiningDate:todayISO(), active:true, createdAt:new Date().toISOString()}, data));
+      }
+      saveDB(); closeModal(); render(); toast('Saved');
+    });
+    const del = root.querySelector('#delStudentBtn');
+    if(del) del.addEventListener('click',()=>{
+      if(confirm(`Delete ${s.name}? This does not delete their class records, but they will be orphaned.`)){
+        DB.students = DB.students.filter(x=>x.id!==s.id); saveDB(); closeModal(); navigate('students'); toast('Student deleted');
+      }
+    });
+  }});
+}
+
+/* ---------- Class record form (quick, per product philosophy) ---------- */
+function openRecordForm(studentId){
+  const s = studentById(studentId);
+  const subjects = s.subjects&&s.subjects.length? s.subjects : DB.subjects;
+  openModal(`
+    ${modalHead('Record: '+escapeHTML(s.name))}
+    <div class="field"><label>Subject</label><select id="r_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Date</label><input type="date" id="r_date" value="${todayISO()}"></div>
+    <div class="grid3">
+      <div class="field"><label>Chapter</label><input id="r_chapter" placeholder="Ch. 5"></div>
+      <div class="field"><label>Topic</label><input id="r_topic" placeholder="Exercise 5.2"></div>
+      <div class="field"><label>Page/Q#</label><input id="r_page" placeholder="Q1–8"></div>
+    </div>
+    <div class="field"><label>What was completed</label><textarea id="r_completed" placeholder="Short note on what you covered"></textarea></div>
+    <div class="grid2">
+      <div class="field"><label>Homework</label><input id="r_hw" placeholder="Q9–12"></div>
+      <div class="field"><label>Homework due</label><input type="date" id="r_hwdue"></div>
+    </div>
+    <div class="field"><label>Next class topic</label><input id="r_next" placeholder="Q13–20"></div>
+    <div class="grid2">
+      <div class="field"><label>Understanding</label><select id="r_understanding">${['Excellent','Good','Average','Weak'].map(u=>`<option>${u}</option>`).join('')}</select></div>
+      <div class="field"><label>Attendance</label><select id="r_att">${['Present','Absent','Late','Cancelled'].map(u=>`<option>${u}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Weakness (optional)</label><input id="r_weak"></div>
+    <div class="field"><label>Teacher note (optional)</label><textarea id="r_note"></textarea></div>
+    <div class="modal-actions"><button class="btn primary block" id="saveRecordBtn">Save Record</button></div>
+  `, {onMount:(root)=>{
+    root.querySelector('#saveRecordBtn').addEventListener('click',()=>{
+      const subject = root.querySelector('#r_subject').value;
+      const rec = {
+        id: uid('rec'), studentId, subject, date: root.querySelector('#r_date').value||todayISO(),
+        chapter: root.querySelector('#r_chapter').value.trim(), topic: root.querySelector('#r_topic').value.trim(),
+        page: root.querySelector('#r_page').value.trim(), completed: root.querySelector('#r_completed').value.trim(),
+        homework: root.querySelector('#r_hw').value.trim(), homeworkDeadline: root.querySelector('#r_hwdue').value||'',
+        understanding: root.querySelector('#r_understanding').value, weakness: root.querySelector('#r_weak').value.trim(),
+        nextTopic: root.querySelector('#r_next').value.trim(), note: root.querySelector('#r_note').value.trim(),
+        createdAt: new Date().toISOString()
+      };
+      DB.classRecords.push(rec);
+      // auto attendance
+      DB.attendance.push({id:uid('att'), studentId, date:rec.date, status:root.querySelector('#r_att').value});
+      // auto homework entry if homework text given
+      if(rec.homework){
+        DB.homework.push({id:uid('hw'), studentId, subject, homework:rec.homework, givenDate:rec.date, dueDate:rec.homeworkDeadline||rec.date, status:'Pending', classRecordId:rec.id});
+      }
+      saveDB(); closeModal(); navigate('studentDetail',{id:studentId,tab:'overview'}); toast('Class record saved');
+    });
+  }});
+}
+
+/* ---------- Homework form ---------- */
+function openHomeworkForm(studentId){
+  const s = studentById(studentId);
+  const subjects = s.subjects&&s.subjects.length? s.subjects : DB.subjects;
+  openModal(`
+    ${modalHead('Assign Homework')}
+    <div class="field"><label>Subject</label><select id="h_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Homework</label><textarea id="h_text"></textarea></div>
+    <div class="grid2">
+      <div class="field"><label>Given date</label><input type="date" id="h_given" value="${todayISO()}"></div>
+      <div class="field"><label>Due date</label><input type="date" id="h_due" value="${todayISO()}"></div>
+    </div>
+    <div class="modal-actions"><button class="btn primary block" id="saveHwBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#saveHwBtn').addEventListener('click',()=>{
+      const text = root.querySelector('#h_text').value.trim();
+      if(!text){ alert('Enter the homework'); return; }
+      DB.homework.push({id:uid('hw'), studentId, subject:root.querySelector('#h_subject').value, homework:text,
+        givenDate:root.querySelector('#h_given').value, dueDate:root.querySelector('#h_due').value, status:'Pending'});
+      saveDB(); closeModal(); render(); toast('Homework assigned');
+    });
+  }});
+}
+
+/* ---------- Exam form ---------- */
+function openExamForm(studentId){
+  const students = DB.students;
+  openModal(`
+    ${modalHead('Add Exam')}
+    ${!studentId? `<div class="field"><label>Student</label><select id="e_student">${students.map(s=>`<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('')}</select></div>`:''}
+    <div class="field"><label>Exam name</label><input id="e_name" placeholder="e.g. Weekly Test"></div>
+    <div class="field"><label>Subject</label><select id="e_subject">${DB.subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Chapter (optional)</label><input id="e_chapter"></div>
+    <div class="field"><label>Date</label><input type="date" id="e_date" value="${todayISO()}"></div>
+    <div class="grid2">
+      <div class="field"><label>Total marks</label><input type="number" id="e_total" value="100"></div>
+      <div class="field"><label>Obtained</label><input type="number" id="e_obtained" value="0"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="e_notes"></textarea></div>
+    <div class="modal-actions"><button class="btn primary block" id="saveExamBtn">Save Exam</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#saveExamBtn').addEventListener('click',()=>{
+      const sid = studentId || root.querySelector('#e_student').value;
+      const name = root.querySelector('#e_name').value.trim();
+      if(!name || !sid){ alert('Exam name and student are required'); return; }
+      DB.exams.push({id:uid('exam'), studentId:sid, name, subject:root.querySelector('#e_subject').value,
+        chapter:root.querySelector('#e_chapter').value.trim(), date:root.querySelector('#e_date').value,
+        total:Number(root.querySelector('#e_total').value)||0, obtained:Number(root.querySelector('#e_obtained').value)||0,
+        notes:root.querySelector('#e_notes').value.trim()});
+      saveDB(); closeModal(); render(); toast('Exam saved');
+    });
+  }});
+}
+
+/* ---------- Syllabus form ---------- */
+function openSyllabusForm(studentId){
+  const s = studentById(studentId);
+  const subjects = s.subjects&&s.subjects.length? s.subjects : DB.subjects;
+  openModal(`
+    ${modalHead('Add Syllabus Item')}
+    <div class="field"><label>Subject</label><select id="sy_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Chapter</label><input id="sy_chapter"></div>
+    <div class="field"><label>Topic (optional)</label><input id="sy_topic"></div>
+    <div class="field"><label>Status</label><select id="sy_status">${['Not Started','In Progress','Completed','Revision'].map(u=>`<option>${u}</option>`).join('')}</select></div>
+    <div class="modal-actions"><button class="btn primary block" id="saveSyllabusBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#saveSyllabusBtn').addEventListener('click',()=>{
+      const chapter = root.querySelector('#sy_chapter').value.trim();
+      if(!chapter){ alert('Chapter is required'); return; }
+      DB.syllabus.push({id:uid('syl'), studentId, subject:root.querySelector('#sy_subject').value, chapter,
+        topic:root.querySelector('#sy_topic').value.trim(), status:root.querySelector('#sy_status').value});
+      saveDB(); closeModal(); render(); toast('Syllabus item added');
+    });
+  }});
+}
+
+/* ---------- Task form ---------- */
+function openTaskForm(){
+  openModal(`
+    ${modalHead('Add Personal Task')}
+    <div class="field"><label>Task</label><input id="t_title" placeholder="e.g. Prepare Class 9 Math"></div>
+    <div class="grid2">
+      <div class="field"><label>Date</label><input type="date" id="t_date" value="${todayISO()}"></div>
+      <div class="field"><label>Priority</label><select id="t_priority">${['High','Medium','Low'].map(p=>`<option>${p}</option>`).join('')}</select></div>
+    </div>
+    <div class="modal-actions"><button class="btn primary block" id="saveTaskBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#saveTaskBtn').addEventListener('click',()=>{
+      const title = root.querySelector('#t_title').value.trim();
+      if(!title){ alert('Enter a task'); return; }
+      DB.tasks.push({id:uid('task'), title, date:root.querySelector('#t_date').value||todayISO(), priority:root.querySelector('#t_priority').value, completed:false});
+      saveDB(); closeModal(); render(); toast('Task added');
+    });
+  }});
+}
+
+/* ---------- Study plan entry form ---------- */
+function openPlanForm(){
+  DB.studyPlan = DB.studyPlan || [];
+  openModal(`
+    ${modalHead('Add Plan Entry')}
+    <div class="field"><label>Day</label><select id="p_day">${WEEKDAYS.map(d=>`<option>${d}</option>`).join('')}</select></div>
+    <div class="field"><label>Student/Batch</label><select id="p_student">${DB.students.map(s=>`<option>${escapeHTML(s.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Subject</label><select id="p_subject">${DB.subjects.map(s=>`<option>${escapeHTML(s)}</option>`).join('')}</select></div>
+    <div class="field"><label>Topic / focus</label><input id="p_topic"></div>
+    <div class="modal-actions"><button class="btn primary block" id="savePlanBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#savePlanBtn').addEventListener('click',()=>{
+      DB.studyPlan.push({id:uid('plan'), day:root.querySelector('#p_day').value, student:root.querySelector('#p_student').value,
+        subject:root.querySelector('#p_subject').value, topic:root.querySelector('#p_topic').value.trim()});
+      saveDB(); closeModal(); render();
+    });
+  }});
+}
+
+/* =========================================================================
+   GLOBAL SEARCH
+   ========================================================================= */
+function runSearch(q){
+  q = q.trim().toLowerCase();
+  const resultsEl = document.getElementById('searchResults');
+  if(!q){ resultsEl.style.display='none'; resultsEl.innerHTML=''; return; }
+  const groups = [];
+
+  const students = DB.students.filter(s=>s.name.toLowerCase().includes(q));
+  if(students.length) groups.push(['Students', students.map(s=>({label:s.name+' — '+typeLabel(s.type), go:()=>navigate('studentDetail',{id:s.id})}))]);
+
+  const subjects = DB.subjects.filter(s=>s.toLowerCase().includes(q));
+  if(subjects.length) groups.push(['Subjects', subjects.map(s=>({label:s, go:()=>navigate('settings')}))]);
+
+  const recs = DB.classRecords.filter(r=>(r.subject+' '+r.chapter+' '+r.topic+' '+r.note).toLowerCase().includes(q));
+  if(recs.length) groups.push(['Class Records', recs.slice(0,8).map(r=>{ const st=studentById(r.studentId); return {label:`${st?st.name:'?'} · ${r.subject} · ${r.date}`, go:()=>navigate('studentDetail',{id:r.studentId,tab:'records'})}; })]);
+
+  const exams = DB.exams.filter(e=>(e.name+' '+e.subject).toLowerCase().includes(q));
+  if(exams.length) groups.push(['Exams', exams.slice(0,8).map(e=>{ const st=studentById(e.studentId); return {label:`${e.name} — ${st?st.name:'?'}`, go:()=>navigate('studentDetail',{id:e.studentId,tab:'exams'})}; })]);
+
+  const hw = DB.homework.filter(h=>(h.subject+' '+h.homework).toLowerCase().includes(q));
+  if(hw.length) groups.push(['Homework', hw.slice(0,8).map(h=>{ const st=studentById(h.studentId); return {label:`${st?st.name:'?'} · ${h.subject}: ${h.homework}`, go:()=>navigate('studentDetail',{id:h.studentId,tab:'homework'})}; })]);
+
+  if(groups.length===0){ resultsEl.style.display='block'; resultsEl.innerHTML = `<div class="sr-item">No results for "${escapeHTML(q)}"</div>`; return; }
+
+  resultsEl.style.display='block';
+  resultsEl.innerHTML = groups.map(([cat,items])=>items.map((it,i)=>`
+    <div class="sr-item" data-sr="${cat}-${i}">${i===0?`<div class="sr-cat">${cat}</div>`:''}${escapeHTML(it.label)}</div>
+  `).join('')).join('');
+
+  let flatIdx=0;
+  groups.forEach(([cat,items])=>items.forEach(it=>{
+    const el = resultsEl.querySelector(`[data-sr="${cat}-${items.indexOf(it)}"]`);
+    if(el) el.addEventListener('click', ()=>{ it.go(); document.getElementById('searchBar').style.display='none'; resultsEl.style.display='none'; document.getElementById('searchInput').value=''; });
+  }));
+}
+
+/* =========================================================================
+   DEMO DATA
+   ========================================================================= */
+function loadDemoData(){
+  const batch = {id:uid('stu'), name:"4 o'clock Batch", type:'batch', class:'9', school:'', subjects:['English','Math'], guardianName:'',guardianPhone:'',area:'',monthlyFee:0, joiningDate:todayISO(), active:true, notes:'Evening batch, 4:00–5:15 PM', createdAt:new Date().toISOString()};
+  const anika = {id:uid('stu'), name:'Anika', type:'private', class:'6', school:'', subjects:['Bangla','English','Math','Science','Social Science'], guardianName:'Anika\'s Father',guardianPhone:'01700000000',area:'Basantapur',monthlyFee:1200, joiningDate:'2026-01-10', active:true, notes:'', createdAt:new Date().toISOString()};
+  const safa = {id:uid('stu'), name:'Safa', type:'private', class:'9', school:'', subjects:['Physics','Chemistry','Biology','Math','English 1st Paper','English 2nd Paper'], guardianName:"Safa's Guardian",guardianPhone:'01800000000',area:'Paba',monthlyFee:2000, joiningDate:'2025-11-01', active:true, notes:'', createdAt:new Date().toISOString()};
+  DB.students.push(batch, anika, safa);
+
+  // Safa syllabus progress per spec example
+  const safaProg = {Physics:60,Chemistry:40,Biology:80,Math:50,'English 1st Paper':60,'English 2nd Paper':30};
+  Object.entries(safaProg).forEach(([subj,pct])=>{
+    const totalItems=5, done=Math.round(totalItems*pct/100);
+    for(let i=1;i<=totalItems;i++){
+      DB.syllabus.push({id:uid('syl'), studentId:safa.id, subject:subj, chapter:`Chapter ${i}`, topic:'', status: i<=done?'Completed':'Not Started'});
+    }
+  });
+
+  // Safa Math class record — matches the spec's worked example exactly
+  DB.classRecords.push({
+    id:uid('rec'), studentId:safa.id, subject:'Math', date:todayISO(),
+    chapter:'Chapter 5', topic:'Exercise 5.2', page:'Q1–8',
+    completed:'Covered algebraic simplification methods with worked examples.',
+    homework:'Q9–12', homeworkDeadline:todayISO(), understanding:'Good', weakness:'Needs more practice on factorization',
+    nextTopic:'Q13–20', note:'', createdAt:new Date().toISOString()
+  });
+  DB.homework.push({id:uid('hw'), studentId:safa.id, subject:'Math', homework:'Q9–12', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
+  DB.attendance.push({id:uid('att'), studentId:safa.id, date:todayISO(), status:'Present'});
+  DB.exams.push({id:uid('exam'), studentId:safa.id, name:'Weekly Test', subject:'Physics', chapter:'Ch 1-2', date:todayISO(), total:100, obtained:62, notes:''});
+
+  // Anika demo class record
+  DB.classRecords.push({
+    id:uid('rec'), studentId:anika.id, subject:'English', date:todayISO(),
+    chapter:'Unit 4', topic:'Reading comprehension', page:'p.32-33',
+    completed:'Read passage and discussed vocabulary.', homework:'Answer Q1-5',
+    homeworkDeadline:todayISO(), understanding:'Average', weakness:'', nextTopic:'Grammar: tenses', note:'', createdAt:new Date().toISOString()
+  });
+  DB.homework.push({id:uid('hw'), studentId:anika.id, subject:'English', homework:'Answer Q1-5', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
+  DB.attendance.push({id:uid('att'), studentId:anika.id, date:todayISO(), status:'Present'});
+
+  // A sample task
+  DB.tasks.push({id:uid('task'), title:'Prepare Class 9 Math worksheet', date:todayISO(), priority:'Medium', completed:false});
+
+  saveDB();
+}
+
+/* =========================================================================
+   INIT
+   ========================================================================= */
+document.getElementById('settingsBtn').addEventListener('click', ()=>navigate('settings'));
+document.getElementById('searchToggleBtn').addEventListener('click', ()=>{
+  const bar = document.getElementById('searchBar');
+  bar.style.display = bar.style.display==='none' ? 'block' : 'none';
+  if(bar.style.display==='block') document.getElementById('searchInput').focus();
+});
+document.getElementById('searchInput').addEventListener('input', e=>runSearch(e.target.value));
+
+document.getElementById('brandEyebrow').textContent = DB.settings.brand;
+
+// keep "now" highlighting fresh + refresh dashboard/today periodically
+setInterval(()=>{ if(ROUTE.page==='dashboard'||ROUTE.page==='today') render(); }, 60000);
+
+render();
+</script>
+
+</body>
+</html>

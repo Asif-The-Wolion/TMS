@@ -2,8 +2,21 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <title>Teacher Planner — Asif National</title>
+
+<!-- PWA: makes "Add to Home Screen" launch full-screen, app-like, no browser chrome -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f1319">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<!-- iOS Safari standalone mode (Android reads display:"standalone" from manifest.json above) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Teacher Planner">
+<meta name="mobile-web-app-capable" content="yes">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:wght@500;600&display=swap" rel="stylesheet">
@@ -38,7 +51,7 @@ a{color:inherit;}
   position:sticky;top:0;z-index:20;
   background:rgba(15,19,25,0.92);backdrop-filter:blur(8px);
   border-bottom:1px solid var(--line);
-  padding:14px 16px 12px;
+  padding:calc(14px + env(safe-area-inset-top)) 16px 12px;
 }
 .topbar-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .brand{display:flex;flex-direction:column;}
@@ -250,7 +263,7 @@ function uid(prefix){
 
 function defaultDB(){
   return {
-    version:1,
+    version:2,
     settings:{
       teacherName:'Md. Asif Khan',
       brand:'Asif National',
@@ -258,33 +271,82 @@ function defaultDB(){
       timezone: TZ,
       city:'Rajshahi', country:'Bangladesh', prayerMethod:1,
       theme:'dark',
-      onboarded:false
+      onboarded:false,
+      // Maghrib-linked class slot (e.g. Safa) — configurable, not hard-coded
+      maghribStudentId:null, maghribOffsetMin:20, maghribDurationMin:70,
+      // Google Drive auto-backup
+      // Backup: no OAuth needed — uses the phone's native Share sheet into the Drive app
+      lastManualBackupAt:null
     },
     students:[],      // {id,name,nickname,type:'madrasa'|'batch'|'private',class,school,guardianName,guardianPhone,area,subjects:[],monthlyFee,joiningDate,active,notes,createdAt}
     subjects:[...SUBJECT_DEFAULTS],
     classRecords:[],  // {id,studentId,subject,date,chapter,topic,page,completed,homework,homeworkDeadline,understanding,weakness,nextTopic,note,createdAt}
     homework:[],      // {id,studentId,subject,homework,givenDate,dueDate,status,classRecordId}
     attendance:[],    // {id,studentId,date,status}
-    exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes}
+    exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes,status:'Scheduled'|'Completed'}
     fees:[],          // {id,studentId,month,monthlyFee,paid,paymentDate,method,notes}
     tasks:[],         // {id,title,date,priority,completed,notes}
     syllabus:[],      // {id,studentId,subject,chapter,topic,status}
-    prayerTimes:{}     // { 'YYYY-MM-DD': {location,maghrib,fetchedAt} }
+    studyPlan:[],
+    prayerTimes:{},    // { 'YYYY-MM-DD': {location,maghrib,fetchedAt} }
+    // Editable daily timetable (excludes the Maghrib-linked slot, which is computed
+    // dynamically from settings.maghribStudentId/Offset/Duration each render).
+    schedule: defaultScheduleBlocks()
   };
 }
 
+function defaultScheduleBlocks(){
+  return [
+    {id:uid('blk'), start:'08:00',end:'09:00',title:'1st Period — English / Math',note:'Class 3',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'09:00',end:'09:30',title:'Spoken English',note:'',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'09:30',end:'09:50',title:'মাশক',note:'',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'09:50',end:'10:30',title:'3rd Period — Social Science / Science / GK',note:'Class 3',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'10:30',end:'10:40',title:'Break',note:'',type:'break',studentId:null},
+    {id:uid('blk'), start:'10:40',end:'11:20',title:'4th Period — Math',note:'Class 2',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'11:20',end:'12:45',title:'5th Period — Math + Bangla / SS / Science / Kitab',note:'',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'12:45',end:'13:00',title:'Return home',note:'',type:'transit',studentId:null},
+    {id:uid('blk'), start:'13:00',end:'15:56',title:'Free / Rest Block',note:'Protected — not auto-filled with work',type:'rest',studentId:null},
+    {id:uid('blk'), start:'16:00',end:'17:15',title:"4 o'clock Batch",note:'Class 9 · English, Math',type:'batch',studentId:null,linkName:"4 o'clock Batch"},
+    {id:uid('blk'), start:'17:15',end:'18:15',title:'Anika',note:'Class 6 · Private · All subjects',type:'private',studentId:null,linkName:'Anika'},
+  ];
+}
+
 let DB = loadDB();
+
+// Shared merge so a fresh load AND a manual "Import Backup" both survive schema
+// additions the same way — new fields fall back to defaults, nothing is dropped.
+function mergeIntoDefaults(parsed){
+  const base = defaultDB();
+  const merged = Object.assign(base, parsed, {
+    settings: Object.assign(base.settings, parsed.settings||{})
+  });
+  // Old backups (pre-schedule-editor) won't have `schedule` at all — already
+  // covered by Object.assign falling back to base.schedule. But some may have
+  // an EMPTY array if they were created between versions; treat empty as "unset".
+  if(!Array.isArray(merged.schedule) || merged.schedule.length===0){
+    merged.schedule = defaultScheduleBlocks();
+  }
+  // best-effort: resolve old name-based links (linkName) to actual studentId
+  // once students are available, so upgraded installs don't lose their links.
+  merged.schedule.forEach(blk=>{
+    if(!blk.studentId && blk.linkName){
+      const match = (merged.students||[]).find(s=>s.name===blk.linkName);
+      if(match) blk.studentId = match.id;
+    }
+  });
+  if(!merged.settings.maghribStudentId){
+    const safa = (merged.students||[]).find(s=>s.name==='Safa');
+    if(safa) merged.settings.maghribStudentId = safa.id;
+  }
+  return merged;
+}
 
 function loadDB(){
   try{
     const raw = localStorage.getItem(DB_KEY);
     if(!raw) return defaultDB();
     const parsed = JSON.parse(raw);
-    // shallow-merge to survive schema additions across versions
-    const base = defaultDB();
-    return Object.assign(base, parsed, {
-      settings: Object.assign(base.settings, parsed.settings||{})
-    });
+    return mergeIntoDefaults(parsed);
   }catch(e){
     console.error('DB load failed, starting fresh', e);
     return defaultDB();
@@ -390,6 +452,69 @@ const PrayerService = (function(){
   return { fetchPrayerTimes, getMaghribTime, getCached };
 })();
 
+/* =========================================================================
+   BACKUP — no-signup approach. Uses the phone's native Share sheet so the
+   backup file goes straight into the Google Drive app the person already
+   has installed and logged into. No OAuth, no Google Cloud project, no card.
+   Paired with a simple "it's been a while" reminder so nothing gets forgotten.
+   ========================================================================= */
+function buildBackupFile(){
+  const content = JSON.stringify(DB, null, 2);
+  const filename = `teacher-planner-backup-${todayISO()}.json`;
+  return { content, filename };
+}
+
+async function shareBackupToDrive(){
+  const { content, filename } = buildBackupFile();
+  const file = new File([content], filename, {type:'application/json'});
+
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{
+      await navigator.share({
+        files:[file],
+        title:'Teacher Planner Backup',
+        text:'Save this to Google Drive to keep your data safe.'
+      });
+      DB.settings.lastManualBackupAt = new Date().toISOString();
+      localStorage.setItem(DB_KEY, JSON.stringify(DB));
+      if(ROUTE.page==='settings') render();
+      toast('Backup shared — choose Drive to save it there');
+    }catch(err){
+      if(err.name !== 'AbortError'){ // user cancelling the share sheet isn't an error
+        console.warn('Share failed, falling back to download', err);
+        downloadBackupFile();
+      }
+    }
+  }else{
+    // Desktop browsers / older Android WebViews don't support sharing files —
+    // fall back to a normal download, which the person can then move into
+    // Drive manually via the Drive app or Files app "Move to" option.
+    downloadBackupFile();
+    toast('Downloaded — open it with the Google Drive app to save it there');
+  }
+}
+
+function downloadBackupFile(){
+  const { content, filename } = buildBackupFile();
+  const blob = new Blob([content], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  DB.settings.lastManualBackupAt = new Date().toISOString();
+  localStorage.setItem(DB_KEY, JSON.stringify(DB));
+  if(ROUTE.page==='settings') render();
+}
+
+// How many days without a backup before we gently remind them.
+const BACKUP_REMINDER_DAYS = 7;
+function daysSinceLastBackup(){
+  if(!DB.settings.lastManualBackupAt) return Infinity;
+  const diffMs = Date.now() - new Date(DB.settings.lastManualBackupAt).getTime();
+  return Math.floor(diffMs / (1000*60*60*24));
+}
+
 /* ---------------- toast ---------------- */
 let toastTimer=null;
 function toast(msg){
@@ -400,35 +525,31 @@ function toast(msg){
 }
 
 /* =========================================================================
-   SCHEDULE SERVICE — fixed madrasa/evening blocks + dynamic Safa slot
+   SCHEDULE SERVICE — editable timetable (DB.schedule) + dynamic Maghrib slot
    ========================================================================= */
-const FIXED_SCHEDULE = [
-  {start:'08:00',end:'09:00',title:'1st Period — English / Math',note:'Class 3',type:'madrasa'},
-  {start:'09:00',end:'09:30',title:'Spoken English',note:'',type:'madrasa'},
-  {start:'09:30',end:'09:50',title:'মাশক',note:'',type:'madrasa'},
-  {start:'09:50',end:'10:30',title:'3rd Period — Social Science / Science / GK',note:'Class 3',type:'madrasa'},
-  {start:'10:30',end:'10:40',title:'Break',note:'',type:'break'},
-  {start:'10:40',end:'11:20',title:'4th Period — Math',note:'Class 2',type:'madrasa'},
-  {start:'11:20',end:'12:45',title:'5th Period — Math + Bangla / SS / Science / Kitab',note:'',type:'madrasa'},
-  {start:'12:45',end:'13:00',title:'Return home',note:'',type:'transit'},
-  {start:'13:00',end:'15:56',title:'Free / Rest Block',note:'Protected — not auto-filled with work',type:'rest'},
-  {start:'16:00',end:'17:15',title:"4 o'clock Batch",note:'Class 9 · English, Math',type:'batch',studentMatch:{name:"4 o'clock Batch"}},
-  {start:'17:15',end:'18:15',title:'Anika',note:'Class 6 · Private · All subjects',type:'private',studentMatch:{name:'Anika'}},
-];
-
 function buildDaySchedule(iso, maghribHHMM){
-  const items = FIXED_SCHEDULE.map(s=>({...s, startMin:toMinutes(parseHHMM(s.start)), endMin:toMinutes(parseHHMM(s.end))}));
+  const blocks = (DB.schedule && DB.schedule.length) ? DB.schedule : defaultScheduleBlocks();
+  const items = blocks.map(s=>({...s, startMin:toMinutes(parseHHMM(s.start)), endMin:toMinutes(parseHHMM(s.end))}));
   let conflict = null;
   if(maghribHHMM){
     const maghrib = parseHHMM(maghribHHMM);
-    const gapStart = items.find(i=>i.title.startsWith('Anika')).endMin;
-    items.push({start:fmt24(maghrib),end:fmt24(maghrib),title:'Maghrib',note:'Fetched automatically',type:'maghrib',startMin:toMinutes(maghrib),endMin:toMinutes(maghrib)});
-    const safaStart = addMinutes(maghrib,20);
-    const safaEnd = addMinutes(safaStart,70);
-    items.push({start:fmt24(safaStart),end:fmt24(safaEnd),title:'Safa',note:'Class 9 · Private · Maghrib + 20 min',type:'private',studentMatch:{name:'Safa'},startMin:toMinutes(safaStart),endMin:toMinutes(safaEnd)});
-    // conflict check: Safa start before Anika ends
-    if(toMinutes(safaStart) < gapStart){
-      conflict = `Safa's calculated start (${fmt12(safaStart)}) overlaps Anika's class, which ends at ${fmt12(fromMinutes(gapStart))}.`;
+    const offset = Number(DB.settings.maghribOffsetMin)||20;
+    const duration = Number(DB.settings.maghribDurationMin)||70;
+    const linkedStudent = DB.settings.maghribStudentId ? studentById(DB.settings.maghribStudentId) : null;
+    items.push({start:fmt24(maghrib),end:fmt24(maghrib),title:'Maghrib',note:'Fetched automatically',type:'maghrib',studentId:null,startMin:toMinutes(maghrib),endMin:toMinutes(maghrib)});
+    const slotStart = addMinutes(maghrib,offset);
+    const slotEnd = addMinutes(slotStart,duration);
+    items.push({
+      start:fmt24(slotStart), end:fmt24(slotEnd),
+      title: linkedStudent ? linkedStudent.name : 'Maghrib-based class',
+      note: linkedStudent ? `${typeLabel(linkedStudent.type)} · Maghrib + ${offset} min` : `Set a student in Settings → Maghrib class`,
+      type:'private', studentId: linkedStudent?linkedStudent.id:null,
+      startMin:toMinutes(slotStart), endMin:toMinutes(slotEnd)
+    });
+    // conflict check: does the Maghrib-linked slot overlap any fixed block that starts before it ends?
+    const overlapping = items.find(b => b.type!=='maghrib' && b.studentId!==(linkedStudent?linkedStudent.id:'__none__') && b.startMin < toMinutes(slotEnd) && b.endMin > toMinutes(slotStart) && b.title !== (linkedStudent?linkedStudent.name:''));
+    if(overlapping){
+      conflict = `The Maghrib-linked class (starts ${fmt12(slotStart)}) overlaps "${overlapping.title}", which runs until ${fmt12(fromMinutes(overlapping.endMin))}.`;
     }
   }
   items.sort((a,b)=>a.startMin-b.startMin);
@@ -533,7 +654,9 @@ function upcomingExams(days){
   const today = todayISO();
   const limit = new Date(today); limit.setDate(limit.getDate()+(days||14));
   const limitISO = limit.toISOString().slice(0,10);
-  return DB.exams.filter(e=>e.date>=today && e.date<=limitISO).sort((a,b)=>a.date.localeCompare(b.date));
+  // "Upcoming" = scheduled and not yet marked — old records with no status field
+  // already have marks, so they default to Completed and are excluded here.
+  return DB.exams.filter(e=>e.date>=today && e.date<=limitISO && (e.status||'Completed')!=='Completed').sort((a,b)=>a.date.localeCompare(b.date));
 }
 function unpaidFeesCount(monthISO){
   const month = monthISO || todayISO().slice(0,7);
@@ -549,11 +672,13 @@ function feeStatusFor(student, monthISO){
   const expected = Number(student.monthlyFee||0);
   const paid = f? Number(f.paid||0):0;
   const due = Math.max(0, expected-paid);
+  const advance = Math.max(0, paid-expected);
   let status='Due';
   if(expected===0) status='—';
+  else if(paid>expected) status='Advance';
   else if(paid>=expected && expected>0) status='Paid';
   else if(paid>0) status='Partial';
-  return {expected,paid,due,status,record:f};
+  return {expected,paid,due,advance,status,record:f};
 }
 function attendanceStatsFor(studentId){
   const recs = DB.attendance.filter(a=>a.studentId===studentId);
@@ -572,7 +697,7 @@ function subjectProgress(studentId, subject){
   return Math.round((done/items.length)*100);
 }
 function examAverage(studentId, subject){
-  const list = DB.exams.filter(e=>e.studentId===studentId && (!subject||e.subject===subject));
+  const list = DB.exams.filter(e=>e.studentId===studentId && (!subject||e.subject===subject) && (e.status||'Completed')==='Completed');
   if(list.length===0) return null;
   const pct = list.map(e=> e.total>0 ? (e.obtained/e.total*100):0);
   return Math.round(pct.reduce((a,b)=>a+b,0)/pct.length);
@@ -596,7 +721,7 @@ function renderDashboard(){
 
   let nextBlock = '';
   if(next){
-    const student = matchStudent(next.studentMatch);
+    const student = next.studentId ? studentById(next.studentId) : null;
     const lastRec = student ? lastClassRecordAcrossSubjects(student.id) : null;
     nextBlock = `
     <div class="card">
@@ -619,9 +744,18 @@ function renderDashboard(){
   }
 
   const tasksToday = DB.tasks.filter(t=>t.date===iso && !t.completed).slice(0,5);
+  const backupDue = DB.students.length>0 && daysSinceLastBackup()>=BACKUP_REMINDER_DAYS;
 
   return `
   <div class="page-sub">${readableDate(iso)} · ${DB.settings.location}</div>
+
+  ${backupDue? `
+  <div class="card" style="border-color:rgba(224,164,88,0.4);cursor:pointer;" data-nav-page="settings">
+    <div class="row">
+      <div style="font-size:13px;"><b>${DB.settings.lastManualBackupAt?`Been ${daysSinceLastBackup()} days since your last backup`:"You haven't backed up yet"}</b><br><span class="page-sub" style="margin:2px 0 0;">Tap to save a copy to Google Drive</span></div>
+      <div class="chev">›</div>
+    </div>
+  </div>` : ''}
 
   <div class="card">
     <div class="card-title">Today's Overview</div>
@@ -637,11 +771,11 @@ function renderDashboard(){
   <div class="card">
     <div class="card-title">Quick Stats</div>
     <div class="grid2">
-      <div class="stat"><div class="num">${activeStudents().length}</div><div class="lbl">Active students</div></div>
-      <div class="stat"><div class="num">${DB.students.length}</div><div class="lbl">Total students</div></div>
-      <div class="stat ${pendingHw>0?'hot':''}"><div class="num">${pendingHw}</div><div class="lbl">Pending homework</div></div>
-      <div class="stat ${exams14.length>0?'hot':''}"><div class="num">${exams14.length}</div><div class="lbl">Upcoming exams</div></div>
-      <div class="stat ${unpaid>0?'hot':''}" style="grid-column:span 2;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees this month</div></div>
+      <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${activeStudents().length}</div><div class="lbl">Active students</div></div>
+      <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${DB.students.length}</div><div class="lbl">Total students</div></div>
+      <div class="stat ${pendingHw>0?'hot':''}" data-stat-nav="homework" style="cursor:pointer;"><div class="num">${pendingHw}</div><div class="lbl">Pending homework</div></div>
+      <div class="stat ${exams14.length>0?'hot':''}" data-stat-nav="exams" style="cursor:pointer;"><div class="num">${exams14.length}</div><div class="lbl">Upcoming exams</div></div>
+      <div class="stat ${unpaid>0?'hot':''}" data-stat-nav="fees" style="grid-column:span 2;cursor:pointer;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees this month</div></div>
     </div>
   </div>
 
@@ -679,8 +813,16 @@ function bindDashboard(){
   document.getElementById('view').querySelectorAll('[data-nav-page]').forEach(el=>{
     el.addEventListener('click',()=>navigate(el.dataset.navPage));
   });
+  document.getElementById('view').querySelectorAll('[data-stat-nav]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const dest = el.dataset.statNav;
+      if(dest==='homework') openPendingHomeworkModal();
+      else navigate(dest);
+    });
+  });
 }
 function matchStudent(matchObj){
+  // legacy helper, kept for any old references; schedule blocks now carry studentId directly
   if(!matchObj) return null;
   return DB.students.find(s=>s.name===matchObj.name) || null;
 }
@@ -695,15 +837,26 @@ function lastClassRecordAcrossSubjects(studentId){
    ========================================================================= */
 let todayISOState = todayISO();
 let todayMaghribInfo = {maghrib:null,status:'loading',message:'Checking prayer time…'};
+let todayEditMode = false;
 
 function renderToday(){
   const {items, conflict} = buildDaySchedule(todayISOState, todayMaghribInfo.maghrib);
   const nowMin = todayISOState===todayISO() ? nowMinutes() : -1;
+  const examsToday = DB.exams.filter(e=>e.date===todayISOState);
+
+  if(todayEditMode) return renderScheduleEditor();
+
+  // merge exams into the visual timeline as extra rows, sorted by time
+  const examRows = examsToday.map(e=>{
+    const st = studentById(e.studentId);
+    return {isExam:true, exam:e, title:`Exam: ${e.name}`, note:`${e.subject}${st?' · '+st.name:''} · ${e.status||'Completed'}`, timeLabel: 'Exam'};
+  });
 
   return `
   <div class="row" style="margin-bottom:12px;">
     <input type="date" id="todayDatePicker" value="${todayISOState}" style="background:var(--card2);border:1px solid var(--line2);border-radius:10px;padding:9px 10px;color:var(--ink);color-scheme:dark;flex:1;">
     <button class="btn sm" id="todayJumpBtn">Today</button>
+    <button class="icon-btn" id="editScheduleBtn" title="Edit schedule">✎</button>
   </div>
   <div class="page-sub">${readableDate(todayISOState)}</div>
 
@@ -720,10 +873,17 @@ function renderToday(){
 
   ${conflict? `<div class="card" style="border-color:rgba(224,122,111,0.5);"><div class="badge err">⚠ Schedule conflict</div><div style="margin-top:8px;font-size:13px;">${conflict}</div></div>` : ''}
 
+  ${examRows.length? `<div class="card" style="padding:6px 14px;">${examRows.map(r=>`
+    <div class="timeline-item" style="cursor:pointer;" data-open-exam="${r.exam.id}">
+      <div class="t" style="color:var(--amber-soft);">${r.timeLabel}</div>
+      <div class="tbody"><div class="ttitle">${escapeHTML(r.title)}</div><div class="tnote">${escapeHTML(r.note)}</div></div>
+      <div class="chev">›</div>
+    </div>`).join('')}</div>` : ''}
+
   <div class="card" style="padding:6px 14px;">
     ${items.map(it=>{
       const status = it.type==='maghrib' ? '' : scheduleStatusFor(it,nowMin);
-      const student = matchStudent(it.studentMatch);
+      const student = it.studentId ? studentById(it.studentId) : null;
       const clickable = student ? `data-open-student="${student.id}"` : '';
       return `
       <div class="timeline-item ${status==='now'?'now':''}" style="${student?'cursor:pointer;':''}" ${clickable}>
@@ -754,6 +914,7 @@ function loadMaghribForToday(force){
 }
 
 function bindToday(){
+  if(todayEditMode){ bindScheduleEditor(); return; }
   loadMaghribForToday(false);
   const view = document.getElementById('view');
   view.querySelector('#todayDatePicker').addEventListener('change', e=>{
@@ -764,13 +925,103 @@ function bindToday(){
     todayISOState = todayISO();
     render();
   });
+  view.querySelector('#editScheduleBtn').addEventListener('click', ()=>{ todayEditMode = true; render(); });
   const rf = view.querySelector('#refreshMaghribBtn');
   if(rf) rf.addEventListener('click', ()=>loadMaghribForToday(true));
   view.querySelectorAll('[data-open-student]').forEach(el=>{
     el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent}));
   });
+  view.querySelectorAll('[data-open-exam]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const exam = DB.exams.find(x=>x.id===el.dataset.openExam);
+      if(exam) openExamForm(exam.studentId, exam.id);
+    });
+  });
+}
+
+/* ---------- Schedule editor (inline on Today page) ---------- */
+function renderScheduleEditor(){
+  const blocks = (DB.schedule||[]).slice().sort((a,b)=>a.start.localeCompare(b.start));
+  const st = DB.settings;
+  return `
+  <div class="row" style="margin-bottom:14px;">
+    <h2 style="font-size:17px;">Edit Schedule</h2>
+    <button class="btn sm primary" id="doneEditScheduleBtn">Done</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Maghrib-linked Class</div>
+    <div class="field"><label>Student</label>
+      <select id="se_maghribStudent">
+        <option value="">— none —</option>
+        ${DB.students.map(s=>`<option value="${s.id}" ${st.maghribStudentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Starts after Maghrib (min)</label><input type="number" id="se_offset" value="${st.maghribOffsetMin}"></div>
+      <div class="field"><label>Duration (min)</label><input type="number" id="se_duration" value="${st.maghribDurationMin}"></div>
+    </div>
+  </div>
+
+  <div class="sub-heading">Fixed Blocks</div>
+  <div class="list" id="se_blockList">
+    ${blocks.map(b=>`
+      <div class="card" style="padding:12px 14px;margin-bottom:10px;" data-block="${b.id}">
+        <div class="grid2">
+          <div class="field"><label>Start</label><input type="time" data-f="start" value="${b.start}"></div>
+          <div class="field"><label>End</label><input type="time" data-f="end" value="${b.end}"></div>
+        </div>
+        <div class="field"><label>Title</label><input data-f="title" value="${escapeHTML(b.title)}"></div>
+        <div class="field"><label>Note</label><input data-f="note" value="${escapeHTML(b.note||'')}"></div>
+        <div class="field"><label>Link to student/batch (optional)</label>
+          <select data-f="studentId">
+            <option value="">— none —</option>
+            ${DB.students.map(s=>`<option value="${s.id}" ${b.studentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn danger sm" data-del-block="${b.id}">Delete block</button>
+      </div>
+    `).join('')}
+  </div>
+  <button class="btn block" id="se_addBlockBtn" style="margin-bottom:16px;">+ Add Block</button>
+  <button class="btn primary block" id="se_saveBtn">Save Schedule</button>
+  `;
+}
+
+function bindScheduleEditor(){
+  const view = document.getElementById('view');
+  view.querySelector('#doneEditScheduleBtn').addEventListener('click', ()=>{ todayEditMode=false; render(); });
+  view.querySelector('#se_addBlockBtn').addEventListener('click', ()=>{
+    DB.schedule.push({id:uid('blk'), start:'16:00', end:'17:00', title:'New Block', note:'', type:'batch', studentId:null});
+    saveDB(); render();
+  });
+  view.querySelectorAll('[data-del-block]').forEach(el=>el.addEventListener('click',()=>{
+    if(confirm('Delete this schedule block?')){
+      DB.schedule = DB.schedule.filter(b=>b.id!==el.dataset.delBlock); saveDB(); render();
+    }
+  }));
+  view.querySelector('#se_saveBtn').addEventListener('click', ()=>{
+    view.querySelectorAll('[data-block]').forEach(card=>{
+      const id = card.dataset.block;
+      const blk = DB.schedule.find(b=>b.id===id);
+      if(!blk) return;
+      blk.start = card.querySelector('[data-f="start"]').value || blk.start;
+      blk.end = card.querySelector('[data-f="end"]').value || blk.end;
+      blk.title = card.querySelector('[data-f="title"]').value.trim() || blk.title;
+      blk.note = card.querySelector('[data-f="note"]').value.trim();
+      blk.studentId = card.querySelector('[data-f="studentId"]').value || null;
+    });
+    DB.settings.maghribStudentId = view.querySelector('#se_maghribStudent').value || null;
+    DB.settings.maghribOffsetMin = Number(view.querySelector('#se_offset').value) || 20;
+    DB.settings.maghribDurationMin = Number(view.querySelector('#se_duration').value) || 70;
+    saveDB();
+    todayEditMode = false;
+    render();
+    toast('Schedule saved');
+  });
 }
 function escapeHTML(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 
 /* =========================================================================
    STUDENTS — list
@@ -953,34 +1204,46 @@ function studentExamsTab(s){
   const exams = DB.exams.filter(e=>e.studentId===s.id).sort((a,b)=>b.date.localeCompare(a.date));
   const avg = examAverage(s.id);
   return `
-  <button class="btn primary block" data-add-exam="${s.id}" style="margin-bottom:12px;">+ Add Exam</button>
-  ${avg!==null?`<div class="card"><div class="card-title">Average</div><div style="font-family:'Fraunces',serif;font-size:26px;">${avg}%</div></div>`:''}
+  <button class="btn primary block" data-add-exam="${s.id}" style="margin-bottom:12px;">+ Add / Schedule Exam</button>
+  ${avg!==null?`<div class="card"><div class="card-title">Average (completed exams)</div><div style="font-family:'Fraunces',serif;font-size:26px;">${avg}%</div></div>`:''}
   ${exams.length===0? `<div class="empty">No exams recorded.</div>` : `<div class="list">${exams.map(e=>{
+    const isScheduled = (e.status||'Completed')==='Scheduled';
     const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
-    return `<div class="item">
-      <div class="dot" style="background:${pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
-      <div class="body"><div class="title">${escapeHTML(e.name)} · ${escapeHTML(e.subject)}</div><div class="meta">${e.date} · ${e.obtained}/${e.total} = ${pct}%</div></div>
+    return `<div class="item" style="cursor:pointer;" data-edit-exam="${e.id}">
+      <div class="dot" style="background:${isScheduled?'var(--amber)':pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(e.name)} · ${escapeHTML(e.subject)}</div><div class="meta">${e.date} · ${isScheduled?'Scheduled — no marks yet':`${e.obtained}/${e.total} = ${pct}%`}</div></div>
+      <div class="chev">›</div>
     </div>`;
   }).join('')}</div>`}
   `;
 }
 
 function studentFeesTab(s){
-  const months = lastNMonths(6);
+  const months = monthsWindow(6,2); // 2 months ahead (for advance) + current + 6 back
   return `
   <div class="card"><div class="card-title">Monthly Fee</div><div style="font-family:'Fraunces',serif;font-size:24px;">${fmtMoney(s.monthlyFee||0)}</div></div>
+  <button class="btn primary block" data-record-payment="${s.id}" style="margin-bottom:12px;">+ Record Payment</button>
   <div class="list">
   ${months.map(m=>{
     const f = feeStatusFor(s,m);
     return `
     <div class="card" style="padding:12px 14px;margin-bottom:10px;">
-      <div class="row"><b>${monthLabel(m)}</b><span class="badge ${f.status==='Paid'?'ok':f.status==='Partial'?'warn':'err'}">${f.status}</span></div>
+      <div class="row"><b>${monthLabel(m)}</b><span class="badge ${feeBadgeClass(f.status)}">${f.status}${f.status==='Advance'?' +'+fmtMoney(f.advance):''}</span></div>
       <div class="page-sub" style="margin-top:4px;">Paid ${fmtMoney(f.paid)} of ${fmtMoney(f.expected)} · Due ${fmtMoney(f.due)}</div>
-      ${f.expected>0?`<button class="btn sm" style="margin-top:8px;" data-mark-paid="${s.id}|${m}">Mark fully paid</button>`:''}
+      ${f.expected>0 && f.status!=='Paid' && f.status!=='Advance'?`<button class="btn sm" style="margin-top:8px;" data-mark-paid="${s.id}|${m}">Mark fully paid</button>`:''}
     </div>`;
   }).join('')}
   </div>
   `;
+}
+function feeBadgeClass(status){ return status==='Paid'?'ok':status==='Advance'?'ok':status==='Partial'?'warn':'err'; }
+function monthsWindow(pastCount, futureCount){
+  const arr=[]; const d=new Date(todayISO()+'T12:00:00');
+  for(let i=(futureCount||0); i>=-(pastCount||0); i--){
+    const y=d.getFullYear(), m=d.getMonth()+1-i; const dd=new Date(y,m-1,1);
+    arr.push(dd.toISOString().slice(0,7));
+  }
+  return arr;
 }
 function lastNMonths(n){
   const arr=[]; const d=new Date(todayISO()+'T12:00:00');
@@ -992,7 +1255,10 @@ function monthLabel(m){ const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toL
 function studentSyllabusTab(s){
   const subjects = s.subjects && s.subjects.length? s.subjects:['General'];
   return `
-  <button class="btn primary block" data-add-syllabus="${s.id}" style="margin-bottom:12px;">+ Add Syllabus Item</button>
+  <div class="grid2" style="margin-bottom:12px;">
+    <button class="btn primary block" data-add-syllabus="${s.id}">+ Add Item</button>
+    <button class="btn block" data-copy-syllabus="${s.id}">⧉ Copy From Student</button>
+  </div>
   ${subjects.map(subj=>{
     const items = DB.syllabus.filter(x=>x.studentId===s.id && x.subject===subj);
     const prog = subjectProgress(s.id, subj);
@@ -1034,6 +1300,7 @@ function bindStudentDetail(id){
     saveDB(); render(); toast('Attendance marked: '+status);
   }));
   const ae = view.querySelector('[data-add-exam]'); if(ae) ae.addEventListener('click',()=>openExamForm(id));
+  view.querySelectorAll('[data-edit-exam]').forEach(el=>el.addEventListener('click',()=>openExamForm(id, el.dataset.editExam)));
   view.querySelectorAll('[data-mark-paid]').forEach(el=>el.addEventListener('click',()=>{
     const [sid,month]=el.dataset.markPaid.split('|');
     const student = studentById(sid);
@@ -1042,10 +1309,12 @@ function bindStudentDetail(id){
     f.paid = student.monthlyFee; f.paymentDate = todayISO(); f.status='Paid';
     saveDB(); render(); toast('Marked as fully paid');
   }));
+  const rp = view.querySelector('[data-record-payment]'); if(rp) rp.addEventListener('click',()=>openPaymentForm(id));
   const asy = view.querySelector('[data-add-syllabus]'); if(asy) asy.addEventListener('click',()=>openSyllabusForm(id));
   view.querySelectorAll('[data-syllabus-status]').forEach(el=>el.addEventListener('change',()=>{
     const it = DB.syllabus.find(x=>x.id===el.dataset.syllabusStatus); it.status=el.value; saveDB(); toast('Progress updated');
   }));
+  const csyl = view.querySelector('[data-copy-syllabus]'); if(csyl) csyl.addEventListener('click',()=>openCopySyllabusForm(id));
 }
 
 /* =========================================================================
@@ -1112,15 +1381,16 @@ function bindStudy(){
 function renderExams(){
   const exams = DB.exams.slice().sort((a,b)=>b.date.localeCompare(a.date));
   return `
-  <button class="btn primary block" id="addExamGlobalBtn" style="margin-bottom:12px;">+ Add Exam</button>
+  <button class="btn primary block" id="addExamGlobalBtn" style="margin-bottom:12px;">+ Add / Schedule Exam</button>
   ${exams.length===0? `<div class="empty"><div class="big">📝</div>No exams recorded yet.</div>` : `
   <div class="list">
   ${exams.map(e=>{
     const st = studentById(e.studentId);
+    const isScheduled = (e.status||'Completed')==='Scheduled';
     const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
-    return `<div class="item" data-open-student="${e.studentId}">
-      <div class="dot" style="background:${pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
-      <div class="body"><div class="title">${escapeHTML(e.name)} — ${st?escapeHTML(st.name):'?'}</div><div class="meta">${escapeHTML(e.subject)} · ${e.date} · ${e.obtained}/${e.total} (${pct}%)</div></div>
+    return `<div class="item" data-edit-exam-global="${e.studentId}|${e.id}">
+      <div class="dot" style="background:${isScheduled?'var(--amber)':pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(e.name)} — ${st?escapeHTML(st.name):'?'}</div><div class="meta">${escapeHTML(e.subject)} · ${e.date} · ${isScheduled?'Scheduled':`${e.obtained}/${e.total} (${pct}%)`}</div></div>
       <div class="chev">›</div>
     </div>`;
   }).join('')}
@@ -1130,7 +1400,10 @@ function renderExams(){
 function bindExams(){
   const view = document.getElementById('view');
   document.getElementById('addExamGlobalBtn').addEventListener('click',()=>openExamForm());
-  view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent,tab:'exams'})));
+  view.querySelectorAll('[data-edit-exam-global]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,eid] = el.dataset.editExamGlobal.split('|');
+    openExamForm(sid, eid);
+  }));
 }
 
 /* =========================================================================
@@ -1156,9 +1429,9 @@ function renderFees(){
   ${students.map(s=>{
     const f = feeStatusFor(s,feesMonth);
     return `<div class="item" data-open-student="${s.id}">
-      <div class="dot" style="background:${f.status==='Paid'?'var(--ok)':f.status==='Partial'?'var(--amber)':'var(--err)'}"></div>
+      <div class="dot" style="background:${f.status==='Paid'||f.status==='Advance'?'var(--ok)':f.status==='Partial'?'var(--amber)':'var(--err)'}"></div>
       <div class="body"><div class="title">${escapeHTML(s.name)}</div><div class="meta">Paid ${fmtMoney(f.paid)} / ${fmtMoney(f.expected)}</div></div>
-      <span class="badge ${f.status==='Paid'?'ok':f.status==='Partial'?'warn':'err'}">${f.status}</span>
+      <span class="badge ${feeBadgeClass(f.status)}">${f.status}</span>
     </div>`;
   }).join('')}
   </div>`}
@@ -1233,6 +1506,17 @@ function renderSettings(){
   </div>
 
   <div class="card">
+    <div class="card-title">Backup to Google Drive</div>
+    <div class="page-sub" style="margin-bottom:12px;">
+      ${st.lastManualBackupAt
+        ? `Last backup: ${new Date(st.lastManualBackupAt).toLocaleString()}${daysSinceLastBackup()>=BACKUP_REMINDER_DAYS?` — <span style="color:var(--amber-soft);">it's been ${daysSinceLastBackup()} days, worth doing again</span>`:''}`
+        : `No backup taken yet — do this now, then again whenever you add a lot of new records.`}
+    </div>
+    <button class="btn primary block" id="shareBackupBtn" style="margin-bottom:8px;">Save Backup to Drive</button>
+    <div class="hint">Opens your phone's Share menu — pick "Drive" (or "Save to Drive"). No sign-in or setup needed, it uses the Drive app you're already logged into.</div>
+  </div>
+
+  <div class="card">
     <div class="card-title">Data</div>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <button class="btn block" id="exportBtn">Export Backup (JSON)</button>
@@ -1248,6 +1532,8 @@ function renderSettings(){
 }
 function bindSettings(){
   const view = document.getElementById('view');
+  const shareBtn = document.getElementById('shareBackupBtn');
+  if(shareBtn) shareBtn.addEventListener('click', shareBackupToDrive);
   document.getElementById('saveSettingsBtn').addEventListener('click',()=>{
     DB.settings.teacherName = view.querySelector('#setName').value.trim() || DB.settings.teacherName;
     DB.settings.brand = view.querySelector('#setBrand').value.trim() || DB.settings.brand;
@@ -1278,12 +1564,7 @@ function bindSettings(){
   });
 }
 function exportBackup(){
-  const blob = new Blob([JSON.stringify(DB,null,2)], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `teacher-planner-backup-${todayISO()}.json`;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
+  downloadBackupFile();
   toast('Backup exported');
 }
 function importBackup(e){
@@ -1297,7 +1578,7 @@ function importBackup(e){
         throw new Error('Not a valid backup file');
       }
       if(!confirm('This will replace all current data with the backup. Continue?')) return;
-      DB = Object.assign(defaultDB(), parsed, {settings:Object.assign(defaultDB().settings, parsed.settings||{})});
+      DB = mergeIntoDefaults(parsed); // same merge path as normal load — new fields fall back to defaults, nothing dropped
       saveDB();
       navigate('dashboard');
       toast('Backup restored');
@@ -1329,6 +1610,30 @@ function modalHead(title){
   return `<div class="modal-head"><h2>${title}</h2><button class="modal-close">✕</button></div>`;
 }
 
+/* ---------- Pending homework — quick list reachable from Dashboard stat ---------- */
+function openPendingHomeworkModal(){
+  const items = DB.homework.filter(h=>h.status==='Pending'||h.status==='Late').sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+  openModal(`
+    ${modalHead('Pending Homework')}
+    ${items.length===0? `<div class="empty">Nothing pending — you're caught up.</div>` : `
+    <div class="list">
+      ${items.map(h=>{
+        const st = studentById(h.studentId);
+        return `<div class="item" style="cursor:pointer;" data-go-hw="${h.studentId}">
+          <div class="dot" style="background:${h.status==='Late'?'var(--err)':'var(--amber)'}"></div>
+          <div class="body"><div class="title">${st?escapeHTML(st.name):'?'} · ${escapeHTML(h.subject)}</div><div class="meta">${escapeHTML(h.homework)} — due ${h.dueDate}</div></div>
+          <div class="chev">›</div>
+        </div>`;
+      }).join('')}
+    </div>`}
+  `,{onMount:(root)=>{
+    root.querySelectorAll('[data-go-hw]').forEach(el=>el.addEventListener('click',()=>{
+      closeModal();
+      navigate('studentDetail',{id:el.dataset.goHw, tab:'homework'});
+    }));
+  }});
+}
+
 /* ---------- Student form ---------- */
 function openStudentForm(id){
   const s = id ? studentById(id) : null;
@@ -1345,6 +1650,14 @@ function openStudentForm(id){
       <div class="field"><label>Class</label><input id="f_class" value="${s?escapeHTML(s.class||''):''}"></div>
     </div>
     <div class="field"><label>School / Madrasa</label><input id="f_school" value="${s?escapeHTML(s.school||''):''}"></div>
+    ${DB.students.length? `
+    <div class="field"><label>Copy subjects from another student (optional)</label>
+      <select id="f_copyFrom">
+        <option value="">— don't copy —</option>
+        ${DB.students.filter(x=>!s||x.id!==s.id).map(x=>`<option value="${x.id}">${escapeHTML(x.name)} (${x.subjects&&x.subjects.length?x.subjects.length+' subjects':'no subjects'})</option>`).join('')}
+      </select>
+      <div class="hint">Handy when several students share the same subjects — e.g. two Class 9 private students.</div>
+    </div>` : ''}
     <div class="field"><label>Subjects</label>
       <div class="chip-select" id="f_subjects">
         ${DB.subjects.map(sub=>`<span class="chip ${subjectsChecked.includes(sub)?'on':''}" data-chip="${escapeHTML(sub)}">${escapeHTML(sub)}</span>`).join('')}
@@ -1366,6 +1679,15 @@ function openStudentForm(id){
     </div>
   `, {onMount:(root)=>{
     root.querySelectorAll('[data-chip]').forEach(chip=>chip.addEventListener('click',()=>chip.classList.toggle('on')));
+    const copyFrom = root.querySelector('#f_copyFrom');
+    if(copyFrom) copyFrom.addEventListener('change', ()=>{
+      const src = studentById(copyFrom.value);
+      if(!src) return;
+      root.querySelectorAll('[data-chip]').forEach(chip=>{
+        chip.classList.toggle('on', (src.subjects||[]).includes(chip.dataset.chip));
+      });
+      toast(`Copied ${src.name}'s subjects — review before saving`);
+    });
     root.querySelector('#saveStudentBtn').addEventListener('click',()=>{
       const name = root.querySelector('#f_name').value.trim();
       if(!name){ alert('Name is required'); return; }
@@ -1468,32 +1790,88 @@ function openHomeworkForm(studentId){
   }});
 }
 
-/* ---------- Exam form ---------- */
-function openExamForm(studentId){
-  const students = DB.students;
+/* ---------- Flexible payment form — supports advance payments (future months) ---------- */
+function openPaymentForm(studentId){
+  const s = studentById(studentId);
+  const thisMonth = todayISO().slice(0,7);
   openModal(`
-    ${modalHead('Add Exam')}
-    ${!studentId? `<div class="field"><label>Student</label><select id="e_student">${students.map(s=>`<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('')}</select></div>`:''}
-    <div class="field"><label>Exam name</label><input id="e_name" placeholder="e.g. Weekly Test"></div>
-    <div class="field"><label>Subject</label><select id="e_subject">${DB.subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
-    <div class="field"><label>Chapter (optional)</label><input id="e_chapter"></div>
-    <div class="field"><label>Date</label><input type="date" id="e_date" value="${todayISO()}"></div>
+    ${modalHead('Record Payment — '+escapeHTML(s.name))}
+    <div class="field"><label>Month</label><input type="month" id="p_month" value="${thisMonth}"></div>
+    <div class="hint" style="margin:-6px 0 12px;">Pick a future month to record an advance payment.</div>
+    <div class="field"><label>Amount (৳)</label><input type="number" id="p_amount" value="${s.monthlyFee||0}"></div>
     <div class="grid2">
-      <div class="field"><label>Total marks</label><input type="number" id="e_total" value="100"></div>
-      <div class="field"><label>Obtained</label><input type="number" id="e_obtained" value="0"></div>
+      <div class="field"><label>Payment date</label><input type="date" id="p_date" value="${todayISO()}"></div>
+      <div class="field"><label>Method</label><select id="p_method">${['Cash','bKash','Nagad','Bank','Other'].map(m=>`<option>${m}</option>`).join('')}</select></div>
     </div>
-    <div class="field"><label>Notes</label><textarea id="e_notes"></textarea></div>
-    <div class="modal-actions"><button class="btn primary block" id="saveExamBtn">Save Exam</button></div>
+    <div class="field"><label>Notes (optional)</label><input id="p_notes"></div>
+    <div class="modal-actions"><button class="btn primary block" id="p_saveBtn">Record Payment</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#p_saveBtn').addEventListener('click',()=>{
+      const month = root.querySelector('#p_month').value;
+      const amount = Number(root.querySelector('#p_amount').value)||0;
+      if(!month || amount<=0){ alert('Enter a valid month and amount'); return; }
+      let f = DB.fees.find(x=>x.studentId===studentId && x.month===month);
+      if(!f){ f={id:uid('fee'), studentId, month, monthlyFee:s.monthlyFee, paid:0, paymentDate:null, method:'Cash', notes:''}; DB.fees.push(f); }
+      // Adds to any existing amount for that month, so partial installments (or an
+      // advance on top of an already-paid month) accumulate rather than overwrite.
+      f.paid = Number(f.paid||0) + amount;
+      f.paymentDate = root.querySelector('#p_date').value || todayISO();
+      f.method = root.querySelector('#p_method').value;
+      const note = root.querySelector('#p_notes').value.trim();
+      if(note) f.notes = f.notes ? f.notes+' · '+note : note;
+      saveDB(); closeModal(); render();
+      const isFuture = month > thisMonth;
+      toast(isFuture ? `Advance payment recorded for ${monthLabel(month)}` : 'Payment recorded');
+    });
+  }});
+}
+
+/* ---------- Exam form ---------- */
+function openExamForm(studentId, examId){
+  const students = DB.students;
+  const existing = examId ? DB.exams.find(e=>e.id===examId) : null;
+  const status0 = existing ? (existing.status||'Completed') : 'Scheduled';
+  openModal(`
+    ${modalHead(existing? 'Edit Exam' : 'Add Exam')}
+    ${!studentId? `<div class="field"><label>Student</label><select id="e_student">${students.map(s=>`<option value="${s.id}" ${existing&&existing.studentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}</select></div>`:''}
+    <div class="field"><label>Exam name</label><input id="e_name" placeholder="e.g. Weekly Test" value="${existing?escapeHTML(existing.name):''}"></div>
+    <div class="field"><label>Subject</label><select id="e_subject">${DB.subjects.map(sub=>`<option ${existing&&existing.subject===sub?'selected':''}>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Chapter (optional)</label><input id="e_chapter" value="${existing?escapeHTML(existing.chapter||''):''}"></div>
+    <div class="field"><label>Date</label><input type="date" id="e_date" value="${existing?existing.date:todayISO()}"></div>
+    <div class="field"><label>Status</label>
+      <select id="e_status">
+        <option value="Scheduled" ${status0==='Scheduled'?'selected':''}>Scheduled (no marks yet)</option>
+        <option value="Completed" ${status0==='Completed'?'selected':''}>Completed (marks entered)</option>
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Total marks</label><input type="number" id="e_total" value="${existing?existing.total:100}"></div>
+      <div class="field"><label>Obtained</label><input type="number" id="e_obtained" value="${existing?existing.obtained:0}"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="e_notes">${existing?escapeHTML(existing.notes||''):''}</textarea></div>
+    <div class="modal-actions">
+      ${existing?`<button class="btn danger" id="delExamBtn">Delete</button>`:''}
+      <button class="btn primary" id="saveExamBtn">${existing?'Save Changes':'Save Exam'}</button>
+    </div>
   `,{onMount:(root)=>{
     root.querySelector('#saveExamBtn').addEventListener('click',()=>{
       const sid = studentId || root.querySelector('#e_student').value;
       const name = root.querySelector('#e_name').value.trim();
       if(!name || !sid){ alert('Exam name and student are required'); return; }
-      DB.exams.push({id:uid('exam'), studentId:sid, name, subject:root.querySelector('#e_subject').value,
+      const data = {
+        studentId:sid, name, subject:root.querySelector('#e_subject').value,
         chapter:root.querySelector('#e_chapter').value.trim(), date:root.querySelector('#e_date').value,
+        status:root.querySelector('#e_status').value,
         total:Number(root.querySelector('#e_total').value)||0, obtained:Number(root.querySelector('#e_obtained').value)||0,
-        notes:root.querySelector('#e_notes').value.trim()});
-      saveDB(); closeModal(); render(); toast('Exam saved');
+        notes:root.querySelector('#e_notes').value.trim()
+      };
+      if(existing){ Object.assign(existing, data); }
+      else { DB.exams.push(Object.assign({id:uid('exam')}, data)); }
+      saveDB(); closeModal(); render(); toast(existing?'Exam updated':'Exam scheduled');
+    });
+    const del = root.querySelector('#delExamBtn');
+    if(del) del.addEventListener('click',()=>{
+      if(confirm('Delete this exam?')){ DB.exams = DB.exams.filter(x=>x.id!==existing.id); saveDB(); closeModal(); render(); toast('Exam deleted'); }
     });
   }});
 }
@@ -1507,160 +1885,4 @@ function openSyllabusForm(studentId){
     <div class="field"><label>Subject</label><select id="sy_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
     <div class="field"><label>Chapter</label><input id="sy_chapter"></div>
     <div class="field"><label>Topic (optional)</label><input id="sy_topic"></div>
-    <div class="field"><label>Status</label><select id="sy_status">${['Not Started','In Progress','Completed','Revision'].map(u=>`<option>${u}</option>`).join('')}</select></div>
-    <div class="modal-actions"><button class="btn primary block" id="saveSyllabusBtn">Save</button></div>
-  `,{onMount:(root)=>{
-    root.querySelector('#saveSyllabusBtn').addEventListener('click',()=>{
-      const chapter = root.querySelector('#sy_chapter').value.trim();
-      if(!chapter){ alert('Chapter is required'); return; }
-      DB.syllabus.push({id:uid('syl'), studentId, subject:root.querySelector('#sy_subject').value, chapter,
-        topic:root.querySelector('#sy_topic').value.trim(), status:root.querySelector('#sy_status').value});
-      saveDB(); closeModal(); render(); toast('Syllabus item added');
-    });
-  }});
-}
-
-/* ---------- Task form ---------- */
-function openTaskForm(){
-  openModal(`
-    ${modalHead('Add Personal Task')}
-    <div class="field"><label>Task</label><input id="t_title" placeholder="e.g. Prepare Class 9 Math"></div>
-    <div class="grid2">
-      <div class="field"><label>Date</label><input type="date" id="t_date" value="${todayISO()}"></div>
-      <div class="field"><label>Priority</label><select id="t_priority">${['High','Medium','Low'].map(p=>`<option>${p}</option>`).join('')}</select></div>
-    </div>
-    <div class="modal-actions"><button class="btn primary block" id="saveTaskBtn">Save</button></div>
-  `,{onMount:(root)=>{
-    root.querySelector('#saveTaskBtn').addEventListener('click',()=>{
-      const title = root.querySelector('#t_title').value.trim();
-      if(!title){ alert('Enter a task'); return; }
-      DB.tasks.push({id:uid('task'), title, date:root.querySelector('#t_date').value||todayISO(), priority:root.querySelector('#t_priority').value, completed:false});
-      saveDB(); closeModal(); render(); toast('Task added');
-    });
-  }});
-}
-
-/* ---------- Study plan entry form ---------- */
-function openPlanForm(){
-  DB.studyPlan = DB.studyPlan || [];
-  openModal(`
-    ${modalHead('Add Plan Entry')}
-    <div class="field"><label>Day</label><select id="p_day">${WEEKDAYS.map(d=>`<option>${d}</option>`).join('')}</select></div>
-    <div class="field"><label>Student/Batch</label><select id="p_student">${DB.students.map(s=>`<option>${escapeHTML(s.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>Subject</label><select id="p_subject">${DB.subjects.map(s=>`<option>${escapeHTML(s)}</option>`).join('')}</select></div>
-    <div class="field"><label>Topic / focus</label><input id="p_topic"></div>
-    <div class="modal-actions"><button class="btn primary block" id="savePlanBtn">Save</button></div>
-  `,{onMount:(root)=>{
-    root.querySelector('#savePlanBtn').addEventListener('click',()=>{
-      DB.studyPlan.push({id:uid('plan'), day:root.querySelector('#p_day').value, student:root.querySelector('#p_student').value,
-        subject:root.querySelector('#p_subject').value, topic:root.querySelector('#p_topic').value.trim()});
-      saveDB(); closeModal(); render();
-    });
-  }});
-}
-
-/* =========================================================================
-   GLOBAL SEARCH
-   ========================================================================= */
-function runSearch(q){
-  q = q.trim().toLowerCase();
-  const resultsEl = document.getElementById('searchResults');
-  if(!q){ resultsEl.style.display='none'; resultsEl.innerHTML=''; return; }
-  const groups = [];
-
-  const students = DB.students.filter(s=>s.name.toLowerCase().includes(q));
-  if(students.length) groups.push(['Students', students.map(s=>({label:s.name+' — '+typeLabel(s.type), go:()=>navigate('studentDetail',{id:s.id})}))]);
-
-  const subjects = DB.subjects.filter(s=>s.toLowerCase().includes(q));
-  if(subjects.length) groups.push(['Subjects', subjects.map(s=>({label:s, go:()=>navigate('settings')}))]);
-
-  const recs = DB.classRecords.filter(r=>(r.subject+' '+r.chapter+' '+r.topic+' '+r.note).toLowerCase().includes(q));
-  if(recs.length) groups.push(['Class Records', recs.slice(0,8).map(r=>{ const st=studentById(r.studentId); return {label:`${st?st.name:'?'} · ${r.subject} · ${r.date}`, go:()=>navigate('studentDetail',{id:r.studentId,tab:'records'})}; })]);
-
-  const exams = DB.exams.filter(e=>(e.name+' '+e.subject).toLowerCase().includes(q));
-  if(exams.length) groups.push(['Exams', exams.slice(0,8).map(e=>{ const st=studentById(e.studentId); return {label:`${e.name} — ${st?st.name:'?'}`, go:()=>navigate('studentDetail',{id:e.studentId,tab:'exams'})}; })]);
-
-  const hw = DB.homework.filter(h=>(h.subject+' '+h.homework).toLowerCase().includes(q));
-  if(hw.length) groups.push(['Homework', hw.slice(0,8).map(h=>{ const st=studentById(h.studentId); return {label:`${st?st.name:'?'} · ${h.subject}: ${h.homework}`, go:()=>navigate('studentDetail',{id:h.studentId,tab:'homework'})}; })]);
-
-  if(groups.length===0){ resultsEl.style.display='block'; resultsEl.innerHTML = `<div class="sr-item">No results for "${escapeHTML(q)}"</div>`; return; }
-
-  resultsEl.style.display='block';
-  resultsEl.innerHTML = groups.map(([cat,items])=>items.map((it,i)=>`
-    <div class="sr-item" data-sr="${cat}-${i}">${i===0?`<div class="sr-cat">${cat}</div>`:''}${escapeHTML(it.label)}</div>
-  `).join('')).join('');
-
-  let flatIdx=0;
-  groups.forEach(([cat,items])=>items.forEach(it=>{
-    const el = resultsEl.querySelector(`[data-sr="${cat}-${items.indexOf(it)}"]`);
-    if(el) el.addEventListener('click', ()=>{ it.go(); document.getElementById('searchBar').style.display='none'; resultsEl.style.display='none'; document.getElementById('searchInput').value=''; });
-  }));
-}
-
-/* =========================================================================
-   DEMO DATA
-   ========================================================================= */
-function loadDemoData(){
-  const batch = {id:uid('stu'), name:"4 o'clock Batch", type:'batch', class:'9', school:'', subjects:['English','Math'], guardianName:'',guardianPhone:'',area:'',monthlyFee:0, joiningDate:todayISO(), active:true, notes:'Evening batch, 4:00–5:15 PM', createdAt:new Date().toISOString()};
-  const anika = {id:uid('stu'), name:'Anika', type:'private', class:'6', school:'', subjects:['Bangla','English','Math','Science','Social Science'], guardianName:'Anika\'s Father',guardianPhone:'01700000000',area:'Basantapur',monthlyFee:1200, joiningDate:'2026-01-10', active:true, notes:'', createdAt:new Date().toISOString()};
-  const safa = {id:uid('stu'), name:'Safa', type:'private', class:'9', school:'', subjects:['Physics','Chemistry','Biology','Math','English 1st Paper','English 2nd Paper'], guardianName:"Safa's Guardian",guardianPhone:'01800000000',area:'Paba',monthlyFee:2000, joiningDate:'2025-11-01', active:true, notes:'', createdAt:new Date().toISOString()};
-  DB.students.push(batch, anika, safa);
-
-  // Safa syllabus progress per spec example
-  const safaProg = {Physics:60,Chemistry:40,Biology:80,Math:50,'English 1st Paper':60,'English 2nd Paper':30};
-  Object.entries(safaProg).forEach(([subj,pct])=>{
-    const totalItems=5, done=Math.round(totalItems*pct/100);
-    for(let i=1;i<=totalItems;i++){
-      DB.syllabus.push({id:uid('syl'), studentId:safa.id, subject:subj, chapter:`Chapter ${i}`, topic:'', status: i<=done?'Completed':'Not Started'});
-    }
-  });
-
-  // Safa Math class record — matches the spec's worked example exactly
-  DB.classRecords.push({
-    id:uid('rec'), studentId:safa.id, subject:'Math', date:todayISO(),
-    chapter:'Chapter 5', topic:'Exercise 5.2', page:'Q1–8',
-    completed:'Covered algebraic simplification methods with worked examples.',
-    homework:'Q9–12', homeworkDeadline:todayISO(), understanding:'Good', weakness:'Needs more practice on factorization',
-    nextTopic:'Q13–20', note:'', createdAt:new Date().toISOString()
-  });
-  DB.homework.push({id:uid('hw'), studentId:safa.id, subject:'Math', homework:'Q9–12', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
-  DB.attendance.push({id:uid('att'), studentId:safa.id, date:todayISO(), status:'Present'});
-  DB.exams.push({id:uid('exam'), studentId:safa.id, name:'Weekly Test', subject:'Physics', chapter:'Ch 1-2', date:todayISO(), total:100, obtained:62, notes:''});
-
-  // Anika demo class record
-  DB.classRecords.push({
-    id:uid('rec'), studentId:anika.id, subject:'English', date:todayISO(),
-    chapter:'Unit 4', topic:'Reading comprehension', page:'p.32-33',
-    completed:'Read passage and discussed vocabulary.', homework:'Answer Q1-5',
-    homeworkDeadline:todayISO(), understanding:'Average', weakness:'', nextTopic:'Grammar: tenses', note:'', createdAt:new Date().toISOString()
-  });
-  DB.homework.push({id:uid('hw'), studentId:anika.id, subject:'English', homework:'Answer Q1-5', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
-  DB.attendance.push({id:uid('att'), studentId:anika.id, date:todayISO(), status:'Present'});
-
-  // A sample task
-  DB.tasks.push({id:uid('task'), title:'Prepare Class 9 Math worksheet', date:todayISO(), priority:'Medium', completed:false});
-
-  saveDB();
-}
-
-/* =========================================================================
-   INIT
-   ========================================================================= */
-document.getElementById('settingsBtn').addEventListener('click', ()=>navigate('settings'));
-document.getElementById('searchToggleBtn').addEventListener('click', ()=>{
-  const bar = document.getElementById('searchBar');
-  bar.style.display = bar.style.display==='none' ? 'block' : 'none';
-  if(bar.style.display==='block') document.getElementById('searchInput').focus();
-});
-document.getElementById('searchInput').addEventListener('input', e=>runSearch(e.target.value));
-
-document.getElementById('brandEyebrow').textContent = DB.settings.brand;
-
-// keep "now" highlighting fresh + refresh dashboard/today periodically
-setInterval(()=>{ if(ROUTE.page==='dashboard'||ROUTE.page==='today') render(); }, 60000);
-
-render();
-</script>
-
-</body>
-</html>
+    <div class="field"><label>Status</label><select id="sy_status">${['Not Started','In Progress','Completed','Revision'].map(u=>`<option>${u}</optio

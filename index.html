@@ -1,0 +1,3218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>Teacher Planner — Asif National</title>
+
+<!-- PWA: makes "Add to Home Screen" launch full-screen, app-like, no browser chrome -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f1319">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<!-- iOS Safari standalone mode (Android reads display:"standalone" from manifest.json above) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Teacher Planner">
+<meta name="mobile-web-app-capable" content="yes">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0f1319; --bg2:#141a22; --card:#1a212b; --card2:#1f2733;
+  --line:#293241; --line2:#33404f;
+  --ink:#eef2f6; --ink-dim:#a9b4c2; --ink-faint:#6b7787;
+  --amber:#e0a458; --amber-soft:#f0c98a; --teal:#5fb9a8; --blue:#6fa3d8;
+  --ok:#7fbf8a; --warn:#e0a458; --err:#e07a6f;
+  --radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html{min-height:100%;}
+body{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  background:var(--bg); color:var(--ink);
+  min-height:100vh;
+  padding-bottom:78px;
+  font-size:14px; line-height:1.45;
+  overflow-x:hidden;
+  overscroll-behavior-y:none;
+}
+h1,h2,h3{font-family:'Fraunces',serif;font-weight:600;letter-spacing:-0.01em;}
+button,input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink);}
+button{cursor:pointer;}
+a{color:inherit;}
+::-webkit-scrollbar{width:0;height:0;}
+
+/* ---------- Top bar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:20;
+  background:rgba(15,19,25,0.92);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);
+  padding:calc(14px + env(safe-area-inset-top)) 16px 12px;
+}
+.topbar-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.brand{display:flex;flex-direction:column;}
+.brand .eyebrow{font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;}
+.brand h1{font-size:19px;color:var(--ink);}
+.topbar-actions{display:flex;gap:8px;}
+.icon-btn{
+  background:var(--card2);border:1px solid var(--line2);border-radius:10px;
+  width:38px;height:38px;display:flex;align-items:center;justify-content:center;
+  font-size:16px;color:var(--ink-dim);
+}
+.icon-btn:active{background:var(--line2);}
+
+.search-bar{margin-top:10px;position:relative;}
+.search-bar input{
+  width:100%;background:var(--card2);border:1px solid var(--line2);border-radius:11px;
+  padding:10px 12px 10px 34px;color:var(--ink);
+}
+.search-bar::before{content:"🔍";position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:12px;opacity:0.5;}
+.search-results{
+  margin-top:8px;background:var(--card2);border:1px solid var(--line2);border-radius:12px;
+  max-height:340px;overflow-y:auto;
+}
+.search-results .sr-item{padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px;}
+.search-results .sr-item:last-child{border-bottom:none;}
+.sr-cat{font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--amber-soft);font-weight:700;margin-bottom:2px;}
+
+/* ---------- Main ---------- */
+main{padding:16px;max-width:560px;margin:0 auto;}
+.page-title{font-size:20px;margin-bottom:4px;}
+.page-sub{color:var(--ink-faint);font-size:12.5px;margin-bottom:16px;}
+
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px;margin-bottom:14px;
+}
+.card-title{font-size:12px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-faint);font-weight:700;margin-bottom:10px;}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.stat{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;}
+.stat .num{font-family:'Fraunces',serif;font-size:22px;color:var(--ink);}
+.stat .lbl{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+.stat.hot{border-color:rgba(224,164,88,0.4);background:linear-gradient(160deg,rgba(224,164,88,0.12),transparent);}
+.stat.hot .num{color:var(--amber-soft);}
+
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px;}
+.badge.ok{background:rgba(127,191,138,0.14);color:var(--ok);}
+.badge.warn{background:rgba(224,164,88,0.14);color:var(--amber-soft);}
+.badge.err{background:rgba(224,122,111,0.14);color:var(--err);}
+.badge.muted{background:var(--card2);color:var(--ink-faint);}
+
+.btn{
+  border:1px solid var(--line2);background:var(--card2);color:var(--ink);
+  border-radius:10px;padding:10px 14px;font-weight:600;font-size:13px;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+}
+.btn:active{background:var(--line2);}
+.btn.primary{background:var(--amber);border-color:var(--amber);color:#1a1206;}
+.btn.primary:active{background:var(--amber-soft);}
+.btn.ghost{background:transparent;}
+.btn.danger{border-color:rgba(224,122,111,0.5);color:var(--err);background:transparent;}
+.btn.block{width:100%;}
+.btn.sm{padding:7px 10px;font-size:12px;border-radius:8px;}
+
+.list{display:flex;flex-direction:column;gap:10px;}
+.item{
+  background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;
+  display:flex;align-items:center;gap:12px;
+}
+.item .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+.item .body{flex:1;min-width:0;}
+.item .title{font-weight:600;font-size:14px;}
+.item .meta{font-size:12px;color:var(--ink-faint);margin-top:2px;}
+.chev{color:var(--ink-faint);font-size:16px;}
+
+.timeline-item{
+  display:flex;gap:12px;padding:13px 4px;border-bottom:1px solid var(--line);
+}
+.timeline-item:last-child{border-bottom:none;}
+.timeline-item.now{background:linear-gradient(90deg,rgba(224,164,88,0.10),transparent);border-radius:10px;margin:0 -6px;padding:13px 10px;}
+.timeline-item .t{width:78px;flex:none;font-size:12px;color:var(--ink-faint);font-variant-numeric:tabular-nums;padding-top:1px;}
+.timeline-item.now .t{color:var(--amber-soft);font-weight:700;}
+.timeline-item .tbody{flex:1;}
+.timeline-item .ttitle{font-weight:600;font-size:14px;}
+.timeline-item .tnote{font-size:12px;color:var(--ink-faint);margin-top:2px;}
+
+.empty{
+  text-align:center;padding:34px 16px;color:var(--ink-faint);
+}
+.empty .big{font-size:28px;margin-bottom:8px;}
+
+.tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px;}
+.tab{
+  flex:none;background:var(--card2);border:1px solid var(--line2);color:var(--ink-dim);
+  padding:8px 13px;border-radius:20px;font-size:12.5px;font-weight:600;white-space:nowrap;
+}
+.tab.active{background:var(--amber);border-color:var(--amber);color:#1a1206;}
+
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:12px;color:var(--ink-faint);margin-bottom:5px;font-weight:600;}
+.field input,.field select,.field textarea{
+  width:100%;background:var(--card2);border:1px solid var(--line2);border-radius:10px;
+  padding:10px 12px;color:var(--ink);color-scheme:dark;
+}
+.field textarea{min-height:64px;resize:vertical;}
+.field .hint{font-size:11px;color:var(--ink-faint);margin-top:4px;}
+.chip-select{display:flex;flex-wrap:wrap;gap:7px;}
+.chip{
+  background:var(--card2);border:1px solid var(--line2);border-radius:20px;padding:7px 12px;font-size:12.5px;color:var(--ink-dim);
+}
+.chip.on{background:rgba(224,164,88,0.16);border-color:var(--amber);color:var(--amber-soft);font-weight:600;}
+
+/* ---------- Bottom nav ---------- */
+.bottomnav{
+  position:fixed;bottom:0;left:0;right:0;z-index:30;
+  background:rgba(15,19,25,0.96);backdrop-filter:blur(10px);
+  border-top:1px solid var(--line);
+  display:flex;justify-content:space-around;padding:6px 2px calc(6px + env(safe-area-inset-bottom));
+}
+.navbtn{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:none;border:none;color:var(--ink-faint);padding:6px 2px;border-radius:10px;
+  font-size:9.5px;font-weight:700;letter-spacing:0.02em;
+}
+.navbtn .ic{font-size:17px;}
+.navbtn.active{color:var(--amber-soft);}
+
+/* ---------- Modal ---------- */
+.modal-backdrop{
+  position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:50;
+  display:flex;align-items:flex-end;justify-content:center;
+}
+.modal-sheet{
+  background:var(--bg2);border-radius:18px 18px 0 0;border:1px solid var(--line);border-bottom:none;
+  width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:18px 16px calc(24px + env(safe-area-inset-bottom));
+}
+.modal-sheet.center{
+  border-radius:16px;border-bottom:1px solid var(--line);max-width:420px;margin:auto;
+}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.modal-head h2{font-size:17px;}
+.modal-close{background:var(--card2);border:1px solid var(--line2);border-radius:10px;width:32px;height:32px;color:var(--ink-dim);font-size:15px;}
+.modal-actions{display:flex;gap:10px;margin-top:16px;}
+.modal-actions .btn{flex:1;}
+
+.toast{
+  position:fixed;bottom:92px;left:50%;transform:translateX(-50%);
+  background:var(--card2);border:1px solid var(--line2);color:var(--ink);
+  padding:10px 16px;border-radius:24px;font-size:13px;font-weight:600;z-index:60;
+  box-shadow:0 8px 24px rgba(0,0,0,0.35);
+}
+
+.divider{height:1px;background:var(--line);margin:14px 0;}
+.sub-heading{font-size:11px;text-transform:uppercase;letter-spacing:0.09em;color:var(--ink-faint);font-weight:700;margin:16px 0 8px;}
+.progress-bar{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:6px;}
+.progress-bar > div{height:100%;background:var(--teal);}
+.two-col-item{display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid var(--line);}
+.two-col-item:last-child{border-bottom:none;}
+.stopblock{
+  background:linear-gradient(160deg,rgba(224,164,88,0.12),rgba(224,164,88,0.02));
+  border:1px solid rgba(224,164,88,0.32);border-radius:12px;padding:12px 14px;margin-bottom:10px;
+}
+.stopblock .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--amber-soft);font-weight:700;}
+.stopblock .val{font-size:13.5px;margin-top:3px;color:var(--ink);}
+
+@media (min-width:640px){
+  .bottomnav{max-width:560px;left:50%;transform:translateX(-50%);border-radius:16px 16px 0 0;border-left:1px solid var(--line);border-right:1px solid var(--line);}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-row">
+    <div class="brand">
+      <div class="eyebrow" id="brandEyebrow">Asif National</div>
+      <h1 id="pageHeading">Dashboard</h1>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="searchToggleBtn" title="Search">🔍</button>
+      <button class="icon-btn" id="settingsBtn" title="Settings">⚙️</button>
+    </div>
+  </div>
+  <div class="search-bar" id="searchBar" style="display:none;">
+    <input type="text" id="searchInput" placeholder="Search students, subjects, records…">
+    <div class="search-results" id="searchResults" style="display:none;"></div>
+  </div>
+</div>
+
+<main id="view"></main>
+
+<div class="bottomnav" id="bottomNav"></div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script>
+/* =========================================================================
+   TEACHER PLANNER — core.js (storage, ids, time/date, prayer service)
+   ========================================================================= */
+const TZ = 'Asia/Dhaka';
+// Bumped on every shipped update — check Settings against this to confirm
+// you're actually running the latest file, not a stale cached/undeployed one.
+const APP_BUILD = '2026-08-23.1';
+const DB_KEY = 'tp_db_v1';
+const SUBJECT_DEFAULTS = ['Bangla','English','English 1st Paper','English 2nd Paper','Math','Physics','Chemistry','Biology','Science','Social Science','General Knowledge','Spoken English','মাশক','Other'];
+
+function uid(prefix){
+  const rand = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36)+Math.random().toString(36).slice(2));
+  return (prefix?prefix+'_':'') + rand;
+}
+
+function defaultDB(){
+  return {
+    version:2,
+    settings:{
+      teacherName:'Md. Asif Khan',
+      brand:'Asif National',
+      location:'Rajshahi, Bangladesh',
+      timezone: TZ,
+      city:'Rajshahi', country:'Bangladesh', prayerMethod:1,
+      theme:'dark',
+      onboarded:false,
+      // Maghrib-linked class slot (e.g. Safa) — configurable, not hard-coded
+      maghribStudentId:null, maghribOffsetMin:20, maghribDurationMin:70,
+      // Google Drive auto-backup
+      // Backup: no OAuth needed — uses the phone's native Share sheet into the Drive app
+      lastManualBackupAt:null,
+      // Off days & salary reference — see offDays[] below for personal/unplanned offs.
+      // weeklyOffDay: a day name like "Friday", or null for none. Recurring, no
+      // salary impact, no makeup tracking — it's just a normal non-teaching day.
+      weeklyOffDay:null,
+      monthlySalary:0,
+      // Google Sheets backup (push-only from the app; restore is on-demand/manual).
+      sheetsWebAppUrl:'', sheetsAutoBackup:false, lastSheetsBackupAt:null,
+      // PIN confirmation gate for Export/Import/Restore — protects against
+      // accidental taps and, for the Sheets restore endpoint specifically, is
+      // also checked server-side by the Apps Script itself.
+      backupPin:'274336'
+    },
+    students:[],      // {id,name,nickname,type:'madrasa'|'batch'|'private',class,school,guardianName,guardianPhone,area,subjects:[],monthlyFee,joiningDate,active,notes,createdAt}
+    subjects:[...SUBJECT_DEFAULTS],
+    classRecords:[],  // {id,studentId,subject,date,chapter,topic,page,completed,homework,homeworkDeadline,understanding,weakness,nextTopic,note,createdAt}
+    homework:[],      // {id,studentId,subject,homework,givenDate,dueDate,status,classRecordId}
+    attendance:[],    // {id,studentId,date,status}
+    exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes,status:'Scheduled'|'Completed'}
+    fees:[],          // {id,studentId,month,monthlyFee,paid,paymentDate,method,notes}
+    tasks:[],         // {id,title,date,priority,completed,notes}
+    syllabus:[],      // {id,studentId,subject,chapter,topic,status}
+    studyPlan:[],
+    prayerTimes:{},    // { 'YYYY-MM-DD': {location,maghrib,fetchedAt} }
+    // Personal/unplanned off days (NOT the recurring weekly off — see settings.weeklyOffDay).
+    // Purely a tracking + reminder tool: no automatic salary deduction is ever computed.
+    offDays:[],       // {id,date,reason,makeupNeeded,makeupDate,makeupDone,createdAt}
+    // Log of a class actually finishing early (or otherwise deviating from the
+    // fixed schedule) on a specific date — the recurring schedule itself is
+    // untouched; this is just a record of what really happened that day.
+    sessionLogs:[],   // {id,date,studentId,title,scheduledStart,scheduledEnd,actualEnd,createdAt}
+    // Editable daily timetable (excludes the Maghrib-linked slot, which is computed
+    // dynamically from settings.maghribStudentId/Offset/Duration each render).
+    schedule: defaultScheduleBlocks()
+  };
+}
+
+function defaultScheduleBlocks(){
+  return [
+
+    {id:uid('blk'), start:'08:00',end:'09:00',title:'1st Period — English / Math',note:'Class 3',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'09:00',end:'09:30',title:'Spoken English',note:'',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'09:30',end:'09:50',title:'মাশক',note:'',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'09:50',end:'10:30',title:'3rd Period — Social Science / Science / GK',note:'Class 3',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'10:30',end:'10:40',title:'Break',note:'',type:'break',studentId:null},
+    {id:uid('blk'), start:'10:40',end:'11:20',title:'4th Period — Math',note:'Class 2',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'11:20',end:'12:45',title:'5th Period — Math + Bangla / SS / Science / Kitab',note:'',type:'madrasa',studentId:null},
+    {id:uid('blk'), start:'12:45',end:'13:00',title:'Return home',note:'',type:'transit',studentId:null},
+    {id:uid('blk'), start:'13:00',end:'15:56',title:'Free / Rest Block',note:'Protected — not auto-filled with work',type:'rest',studentId:null},
+    {id:uid('blk'), start:'16:00',end:'17:15',title:"4 o'clock Batch",note:'Class 9 · English, Math',type:'batch',studentId:null,linkName:"4 o'clock Batch"},
+    {id:uid('blk'), start:'17:15',end:'18:15',title:'Anika',note:'Class 6 · Private · All subjects',type:'private',studentId:null,linkName:'Anika'},
+  ];
+}
+
+let DB = loadDB();
+
+// Shared merge so a fresh load AND a manual "Import Backup" both survive schema
+// additions the same way — new fields fall back to defaults, nothing is dropped.
+function mergeIntoDefaults(parsed){
+  const base = defaultDB();
+  const merged = Object.assign(base, parsed, {
+    settings: Object.assign(base.settings, parsed.settings||{})
+  });
+  // Old backups (pre-schedule-editor) won't have `schedule` at all — already
+  // covered by Object.assign falling back to base.schedule. But some may have
+  // an EMPTY array if they were created between versions; treat empty as "unset".
+  if(!Array.isArray(merged.schedule) || merged.schedule.length===0){
+    merged.schedule = defaultScheduleBlocks();
+  }
+  // best-effort: resolve old name-based links (linkName) to actual studentId
+  // once students are available, so upgraded installs don't lose their links.
+  merged.schedule.forEach(blk=>{
+    if(!blk.studentId && blk.linkName){
+      const match = (merged.students||[]).find(s=>s.name===blk.linkName);
+      if(match) blk.studentId = match.id;
+    }
+  });
+  if(!merged.settings.maghribStudentId){
+    const safa = (merged.students||[]).find(s=>s.name==='Safa');
+    if(safa) merged.settings.maghribStudentId = safa.id;
+  }
+  // Migration: "isGroup" generalizes what used to be hardcoded to type==='batch'.
+  // Any student that already had type 'batch' is, by definition, a group
+  // container — carry that forward automatically so nothing about existing
+  // batches changes behavior after this update.
+  (merged.students||[]).forEach(s=>{
+    if(s.isGroup===undefined) s.isGroup = (s.type==='batch');
+  });
+  return merged;
+}
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(DB_KEY);
+    if(!raw) return defaultDB();
+    const parsed = JSON.parse(raw);
+    return mergeIntoDefaults(parsed);
+  }catch(e){
+    console.error('DB load failed, starting fresh', e);
+    return defaultDB();
+  }
+}
+function saveDB(){
+  try{
+    localStorage.setItem(DB_KEY, JSON.stringify(DB));
+  }catch(e){
+    console.error('DB save failed', e);
+    toast('⚠ Could not save — storage may be full');
+  }
+  scheduleSheetsBackup();
+}
+
+/* ---------------- date / time helpers (Asia/Dhaka authoritative) ---------------- */
+function todayISO(){
+  return new Intl.DateTimeFormat('en-CA',{timeZone:TZ}).format(new Date());
+}
+function addDaysISO(iso, days){
+  const d = new Date(iso+'T12:00:00');
+  d.setDate(d.getDate()+days);
+  return new Intl.DateTimeFormat('en-CA',{timeZone:TZ}).format(d);
+}
+function nowDhakaParts(){
+  const fmt = new Intl.DateTimeFormat('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false});
+  const parts = fmt.formatToParts(new Date());
+  const h = parseInt(parts.find(p=>p.type==='hour').value,10);
+  const m = parseInt(parts.find(p=>p.type==='minute').value,10);
+  return {h,m};
+}
+function nowMinutes(){ const {h,m}=nowDhakaParts(); return h*60+m; }
+function readableDate(iso){
+  const d = new Date(iso+'T12:00:00');
+  return new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(d);
+}
+function weekdayShort(iso){
+  const d = new Date(iso+'T12:00:00');
+  return new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short'}).format(d);
+}
+function weekdayLong(iso){
+  const d = new Date(iso+'T12:00:00');
+  return new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'long'}).format(d);
+}
+function daysInMonth(monthISO){ // 'YYYY-MM' -> number of days
+  const [y,m] = monthISO.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+/* ---------------- Off days: weekly (recurring, no impact) + personal (tracked) ---------------- */
+function isWeeklyOff(iso){
+  return !!DB.settings.weeklyOffDay && weekdayLong(iso) === DB.settings.weeklyOffDay;
+}
+function personalOffFor(iso){
+  return (DB.offDays||[]).find(o=>o.date===iso) || null;
+}
+function isOffDay(iso){
+  return isWeeklyOff(iso) || !!personalOffFor(iso);
+}
+function pendingMakeups(){
+  return (DB.offDays||[]).filter(o=>o.makeupNeeded && !o.makeupDone).sort((a,b)=>a.date.localeCompare(b.date));
+}
+function weeklyOffCountInMonth(monthISO){
+  if(!DB.settings.weeklyOffDay) return 0;
+  const total = daysInMonth(monthISO);
+  let count=0;
+  for(let d=1; d<=total; d++){
+    const iso = `${monthISO}-${String(d).padStart(2,'0')}`;
+    if(isWeeklyOff(iso)) count++;
+  }
+  return count;
+}
+function personalOffCountInMonth(monthISO){
+  return (DB.offDays||[]).filter(o=>o.date.startsWith(monthISO)).length;
+}
+function perDayRate(monthISO){
+  // Fixed monthly salary — paid the same regardless of the weekly off day
+  // (confirmed: Friday off still gets paid since it's a monthly arrangement),
+  // so the denominator is every calendar day in the month, not "working days."
+  const salary = Number(DB.settings.monthlySalary)||0;
+  if(salary<=0) return null;
+  const total = daysInMonth(monthISO);
+  if(total<=0) return null;
+  return salary / total;
+}
+function daysElapsedInMonth(monthISO){
+  const today = todayISO();
+  if(monthISO === today.slice(0,7)) return parseInt(today.slice(8,10),10);
+  if(monthISO < today.slice(0,7)) return daysInMonth(monthISO); // a past month is fully elapsed
+  return 0; // a future month hasn't started
+}
+function parseHHMM(raw){
+  if(!raw) return null;
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(raw).trim());
+  if(!m) return null;
+  const h=parseInt(m[1],10), mi=parseInt(m[2],10);
+  if(h<0||h>23||mi<0||mi>59) return null;
+  return {h,m:mi};
+}
+function toMinutes(t){ return t.h*60+t.m; }
+function fromMinutes(mins){ mins=((mins%1440)+1440)%1440; return {h:Math.floor(mins/60), m:mins%60}; }
+function addMinutes(t,mins){ return fromMinutes(toMinutes(t)+mins); }
+function fmt12(t){ if(!t) return '—'; const period=t.h>=12?'PM':'AM'; let h12=t.h%12; if(h12===0)h12=12; return `${h12}:${String(t.m).padStart(2,'0')} ${period}`; }
+function fmt24(t){ return `${String(t.h).padStart(2,'0')}:${String(t.m).padStart(2,'0')}`; }
+function formatDuration(mins){
+  mins = Math.max(0, Math.round(mins));
+  if(mins < 1) return 'less than a minute';
+  const h = Math.floor(mins/60), m = mins%60;
+  if(h===0) return `${m} min`;
+  if(m===0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+function fmtMoney(n){ n = Number(n)||0; return '৳' + n.toLocaleString('en-IN'); }
+
+/* =========================================================================
+   PRAYER SERVICE — isolated, replaceable. AlAdhan public API, no key needed.
+   ========================================================================= */
+const PrayerService = (function(){
+  function apiDate(iso){ const [y,m,d]=iso.split('-'); return `${d}-${m}-${y}`; }
+
+  async function fetchPrayerTimes(iso){
+    const { city, country, prayerMethod } = DB.settings;
+    const url = `https://api.aladhan.com/v1/timingsByCity/${apiDate(iso)}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&method=${prayerMethod}`;
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(), 8000);
+    try{
+      const res = await fetch(url,{signal:controller.signal});
+      clearTimeout(timer);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const json = await res.json();
+      if(!json || json.code!==200 || !json.data || !json.data.timings || !json.data.timings.Maghrib){
+        throw new Error('Invalid API response');
+      }
+      const parsed = parseHHMM(json.data.timings.Maghrib);
+      if(!parsed) throw new Error('Unparseable Maghrib');
+      return { location: `${city}, ${country}`, maghrib: fmt24(parsed), fetchedAt: new Date().toISOString() };
+    }catch(e){
+      clearTimeout(timer);
+      throw e;
+    }
+  }
+
+  function getCached(iso){ return DB.prayerTimes[iso] || null; }
+  function setCached(iso,data){ DB.prayerTimes[iso]=data; saveDB(); }
+
+  /**
+   * getMaghribTime(iso, {forceRefresh}) -> { maghrib:'HH:MM'|null, source:'api'|'cache'|null, status:'ok'|'warn'|'err', message:string }
+   */
+  async function getMaghribTime(iso, opts){
+    opts = opts||{};
+    const cached = getCached(iso);
+    if(!opts.forceRefresh && cached){
+      // return cache instantly; caller may still trigger a background refresh
+      return { maghrib:cached.maghrib, source:'cache', status:'ok', message:'Loaded from saved prayer time.' };
+    }
+    try{
+      const fresh = await fetchPrayerTimes(iso);
+      setCached(iso, fresh);
+      return { maghrib:fresh.maghrib, source:'api', status:'ok', message:'Prayer time updated from API.' };
+    }catch(e){
+      if(cached){
+        return { maghrib:cached.maghrib, source:'cache', status:'warn', message:'Using saved prayer time — API unavailable.' };
+      }
+      return { maghrib:null, source:null, status:'err', message:'Maghrib time unavailable.' };
+    }
+  }
+
+  return { fetchPrayerTimes, getMaghribTime, getCached };
+})();
+
+/* =========================================================================
+   BACKUP — no-signup approach. Uses the phone's native Share sheet so the
+   backup file goes straight into the Google Drive app the person already
+   has installed and logged into. No OAuth, no Google Cloud project, no card.
+   Paired with a simple "it's been a while" reminder so nothing gets forgotten.
+   ========================================================================= */
+function buildBackupFile(){
+  const content = JSON.stringify(DB, null, 2);
+  const filename = `teacher-planner-backup-${todayISO()}.json`;
+  return { content, filename };
+}
+
+async function shareBackupToDrive(){
+  const { content, filename } = buildBackupFile();
+  const file = new File([content], filename, {type:'application/json'});
+
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{
+      await navigator.share({
+        files:[file],
+        title:'Teacher Planner Backup',
+        text:'Save this to Google Drive to keep your data safe.'
+      });
+      DB.settings.lastManualBackupAt = new Date().toISOString();
+      localStorage.setItem(DB_KEY, JSON.stringify(DB));
+      if(ROUTE.page==='settings') render();
+      toast('Backup shared — choose Drive to save it there');
+    }catch(err){
+      if(err.name !== 'AbortError'){ // user cancelling the share sheet isn't an error
+        console.warn('Share failed, falling back to download', err);
+        downloadBackupFile();
+      }
+    }
+  }else{
+    // Desktop browsers / older Android WebViews don't support sharing files —
+    // fall back to a normal download, which the person can then move into
+    // Drive manually via the Drive app or Files app "Move to" option.
+    downloadBackupFile();
+    toast('Downloaded — open it with the Google Drive app to save it there');
+  }
+}
+
+function downloadBackupFile(){
+  const { content, filename } = buildBackupFile();
+  const blob = new Blob([content], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  DB.settings.lastManualBackupAt = new Date().toISOString();
+  localStorage.setItem(DB_KEY, JSON.stringify(DB));
+  if(ROUTE.page==='settings') render();
+}
+
+// How many days without a backup before we gently remind them.
+const BACKUP_REMINDER_DAYS = 7;
+function daysSinceLastBackup(){
+  if(!DB.settings.lastManualBackupAt) return Infinity;
+  const diffMs = Date.now() - new Date(DB.settings.lastManualBackupAt).getTime();
+  return Math.floor(diffMs / (1000*60*60*24));
+}
+
+/* =========================================================================
+   GOOGLE SHEETS BACKUP — push-only from the app (auto + manual). Restore is
+   on-demand, gated only by a local confirm() before overwriting data. The
+   real access control is the Web App URL itself — without it, the endpoint
+   is unreachable, so there's no separate PIN layer on top of that.
+   Uses Content-Type: text/plain on POST specifically to avoid a CORS
+   preflight, which Apps Script Web Apps don't handle — this is the standard
+   workaround; the Apps Script side still parses the body as JSON regardless
+   of the declared content type.
+   ========================================================================= */
+let sheetsBackupTimer = null;
+function scheduleSheetsBackup(){
+  if(!DB.settings.sheetsAutoBackup || !DB.settings.sheetsWebAppUrl) return;
+  clearTimeout(sheetsBackupTimer);
+  sheetsBackupTimer = setTimeout(pushToSheets, 5000);
+}
+
+async function pushToSheets(silent){
+  const url = DB.settings.sheetsWebAppUrl;
+  if(!url) { if(!silent) toast('⚠ Add your Apps Script Web App URL in Settings first'); return; }
+  if(!silent) toast('Backing up to Sheet…');
+  try{
+    const res = await fetch(url, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ data: DB })
+    });
+    const json = await res.json().catch(()=>({ok:false,error:'Bad response'}));
+    if(!json.ok) throw new Error(json.error||'Unknown error');
+    DB.settings.lastSheetsBackupAt = new Date().toISOString();
+    localStorage.setItem(DB_KEY, JSON.stringify(DB)); // direct write — avoid re-triggering saveDB's own debounce loop
+    if(ROUTE.page==='settings') render();
+    if(!silent) toast('Backed up to Sheet');
+  }catch(err){
+    console.warn('Sheets backup failed (will retry on next change):', err);
+    if(!silent) toast('⚠ Sheet backup failed — check the URL and your connection');
+  }
+}
+
+async function restoreFromSheets(){
+  const url = DB.settings.sheetsWebAppUrl;
+  if(!url){ alert('Add your Apps Script Web App URL in Settings first.'); return; }
+  try{
+    toast('Fetching backup…');
+    const res = await fetch(`${url}?action=restore`);
+    const json = await res.json();
+    if(!json.ok) throw new Error(json.error||'Restore failed');
+    const parsed = json.data;
+    if(!parsed || !Array.isArray(parsed.students)) throw new Error('Backup on the sheet looks corrupted or empty');
+    if(!confirm('Replace ALL current data with the Google Sheet backup? This cannot be undone.')) return;
+    DB = mergeIntoDefaults(parsed);
+    saveDB();
+    navigate('dashboard');
+    toast('Restored from Google Sheet');
+  }catch(err){
+    alert('Restore failed: ' + err.message);
+  }
+}
+
+/* ---------------- toast ---------------- */
+let toastTimer=null;
+function toast(msg){
+  const root = document.getElementById('toastRoot');
+  root.innerHTML = `<div class="toast">${msg}</div>`;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ root.innerHTML=''; }, 2600);
+}
+
+/* =========================================================================
+   SCHEDULE SERVICE — editable timetable (DB.schedule) + dynamic Maghrib slot
+   ========================================================================= */
+function buildDaySchedule(iso, maghribHHMM){
+  const blocks = (DB.schedule && DB.schedule.length) ? DB.schedule : defaultScheduleBlocks();
+  const items = blocks.map(s=>({...s, startMin:toMinutes(parseHHMM(s.start)), endMin:toMinutes(parseHHMM(s.end))}));
+  let conflict = null;
+  if(maghribHHMM){
+    const maghrib = parseHHMM(maghribHHMM);
+    const offset = Number(DB.settings.maghribOffsetMin)||20;
+    const duration = Number(DB.settings.maghribDurationMin)||70;
+    const linkedStudent = DB.settings.maghribStudentId ? studentById(DB.settings.maghribStudentId) : null;
+    items.push({start:fmt24(maghrib),end:fmt24(maghrib),title:'Maghrib',note:'Fetched automatically',type:'maghrib',studentId:null,startMin:toMinutes(maghrib),endMin:toMinutes(maghrib)});
+    const slotStart = addMinutes(maghrib,offset);
+    const slotEnd = addMinutes(slotStart,duration);
+    items.push({
+      start:fmt24(slotStart), end:fmt24(slotEnd),
+      title: linkedStudent ? linkedStudent.name : 'Maghrib-based class',
+      note: linkedStudent ? `${typeLabel(linkedStudent.type)} · Maghrib + ${offset} min` : `Set a student in Settings → Maghrib class`,
+      type:'private', studentId: linkedStudent?linkedStudent.id:null,
+      startMin:toMinutes(slotStart), endMin:toMinutes(slotEnd)
+    });
+    // conflict check: does the Maghrib-linked slot overlap any fixed block that starts before it ends?
+    const overlapping = items.find(b => b.type!=='maghrib' && b.studentId!==(linkedStudent?linkedStudent.id:'__none__') && b.startMin < toMinutes(slotEnd) && b.endMin > toMinutes(slotStart) && b.title !== (linkedStudent?linkedStudent.name:''));
+    if(overlapping){
+      conflict = `The Maghrib-linked class (starts ${fmt12(slotStart)}) overlaps "${overlapping.title}", which runs until ${fmt12(fromMinutes(overlapping.endMin))}.`;
+    }
+  }
+  items.sort((a,b)=>a.startMin-b.startMin);
+  return {items, conflict};
+}
+
+function scheduleStatusFor(item, nowMin){
+  if(item.type==='maghrib') return nowMin>=item.startMin && nowMin < item.startMin+1 ? 'now' : (nowMin>item.startMin?'past':'upcoming');
+  if(nowMin>=item.startMin && nowMin<item.endMin) return 'now';
+  if(nowMin>=item.endMin) return 'past';
+  return 'upcoming';
+}
+
+/* =========================================================================
+   ROUTER + RENDER ENGINE
+   ========================================================================= */
+const NAV_ITEMS = [
+  {id:'dashboard', label:'Dashboard', icon:'🏠'},
+  {id:'today', label:'Today', icon:'🕐'},
+  {id:'students', label:'Students', icon:'🎓'},
+  {id:'study', label:'Study', icon:'📘'},
+  {id:'exams', label:'Exams', icon:'📝'},
+  {id:'fees', label:'Fees', icon:'৳'},
+  {id:'reports', label:'Reports', icon:'📊'},
+];
+let ROUTE = {page:'dashboard', params:{}};
+
+function navigate(page, params){
+  ROUTE = {page, params:params||{}};
+  window.scrollTo(0,0);
+  render();
+}
+
+function renderNav(){
+  const nav = document.getElementById('bottomNav');
+  nav.innerHTML = NAV_ITEMS.map(n=>`
+    <button class="navbtn ${ROUTE.page===n.id?'active':''}" data-nav="${n.id}">
+      <span class="ic">${n.icon}</span><span>${n.label}</span>
+    </button>
+  `).join('');
+  nav.querySelectorAll('[data-nav]').forEach(btn=>{
+    btn.addEventListener('click',()=>navigate(btn.dataset.nav));
+  });
+}
+
+const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', study:'Study Plan', exams:'Exams', fees:'Fees', reports:'Reports', settings:'Settings', studentDetail:'Student'};
+
+function render(){
+  document.getElementById('pageHeading').textContent = PAGE_TITLES[ROUTE.page] || 'Teacher Planner';
+  renderNav();
+  const view = document.getElementById('view');
+
+  if(!DB.settings.onboarded && DB.students.length===0 && ROUTE.page==='dashboard'){
+    view.innerHTML = renderFirstRun();
+    bindFirstRun();
+    return;
+  }
+
+  switch(ROUTE.page){
+    case 'dashboard': view.innerHTML = renderDashboard(); bindDashboard(); break;
+    case 'today': view.innerHTML = renderToday(); bindToday(); break;
+    case 'students': view.innerHTML = renderStudents(); bindStudents(); break;
+    case 'studentDetail': view.innerHTML = renderStudentDetail(ROUTE.params.id, ROUTE.params.tab||'overview'); bindStudentDetail(ROUTE.params.id); break;
+    case 'study': view.innerHTML = renderStudy(); bindStudy(); break;
+    case 'exams': view.innerHTML = renderExams(); bindExams(); break;
+    case 'fees': view.innerHTML = renderFees(); bindFees(); break;
+    case 'reports': view.innerHTML = renderReports(); bindReports(); break;
+    case 'settings': view.innerHTML = renderSettings(); bindSettings(); break;
+    default: view.innerHTML = '<div class="empty">Not found.</div>';
+  }
+}
+
+function renderFirstRun(){
+  return `
+  <div class="card" style="text-align:center;padding:34px 20px;">
+    <div style="font-size:34px;margin-bottom:10px;">📘</div>
+    <h2 style="font-size:20px;margin-bottom:8px;">Welcome to Teacher Planner</h2>
+    <p class="page-sub" style="margin-bottom:20px;">Your personal teaching operating system. Load sample data to explore, or start fresh with your own students.</p>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn primary block" id="loadDemoBtn">Load Demo Data</button>
+      <button class="btn block" id="startFreshBtn">Start Fresh</button>
+    </div>
+  </div>`;
+}
+function bindFirstRun(){
+  document.getElementById('loadDemoBtn').addEventListener('click',()=>{ loadDemoData(); DB.settings.onboarded=true; saveDB(); navigate('dashboard'); toast('Demo data loaded'); });
+  document.getElementById('startFreshBtn').addEventListener('click',()=>{ DB.settings.onboarded=true; saveDB(); navigate('students'); });
+}
+
+/* =========================================================================
+   DATA HELPERS (queries across collections)
+   ========================================================================= */
+function activeStudents(){ return DB.students.filter(s=>s.active!==false); }
+// For headcount purposes only — excludes group/batch containers, which aren't
+// real individual students even though they live in the same DB.students list.
+function individualStudents(){ return activeStudents().filter(s=>!s.isGroup); }
+function studentById(id){ return DB.students.find(s=>s.id===id); }
+function batchMembers(batchId){ return DB.students.filter(s=>s.batchId===batchId); }
+function lastClassRecord(studentId, subject){
+  let recs = DB.classRecords.filter(r=>r.studentId===studentId && (!subject || r.subject===subject));
+  if(recs.length===0){
+    // A batch member with no personal override yet — fall back to the shared
+    // class record recorded for the whole batch.
+    const student = studentById(studentId);
+    if(student && student.batchId){
+      recs = DB.classRecords.filter(r=>r.studentId===student.batchId && (!subject || r.subject===subject));
+    }
+  }
+  if(recs.length===0) return null;
+  return recs.slice().sort((a,b)=> (b.date+b.createdAt).localeCompare(a.date+a.createdAt))[0];
+}
+function pendingHomeworkCount(){ return DB.homework.filter(h=>h.status==='Pending'||h.status==='Late').length; }
+function upcomingExams(days){
+  const today = todayISO();
+  const limit = new Date(today); limit.setDate(limit.getDate()+(days||14));
+  const limitISO = limit.toISOString().slice(0,10);
+  // "Upcoming" = scheduled and not yet marked — old records with no status field
+  // already have marks, so they default to Completed and are excluded here.
+  return DB.exams.filter(e=>e.date>=today && e.date<=limitISO && (e.status||'Completed')!=='Completed').sort((a,b)=>a.date.localeCompare(b.date));
+}
+function awaitingResultsExams(){
+  // Exam date has already passed (or is today) but marks were never entered —
+  // these are easy to lose track of since you'd otherwise have to remember to
+  // go find them under each student's Exams tab.
+  // Also treats "obtained > 0" as proof marks WERE entered even if the status
+  // field itself is stuck on "Scheduled" from before this check existed —
+  // so an already-graded exam doesn't keep reappearing here.
+  const today = todayISO();
+  return DB.exams.filter(e=>e.date<=today && (e.status||'Completed')==='Scheduled' && !(Number(e.obtained)>0)).sort((a,b)=>a.date.localeCompare(b.date));
+}
+function unpaidFeesCount(monthISO){
+  const month = monthISO || todayISO().slice(0,7);
+  return individualStudents().filter(s=>s.monthlyFee>0).filter(s=>{
+    const f = DB.fees.find(x=>x.studentId===s.id && x.month===month);
+    const paid = f? Number(f.paid||0) : 0;
+    return paid < Number(s.monthlyFee||0);
+  }).length;
+}
+function feeStatusFor(student, monthISO){
+  const month = monthISO || todayISO().slice(0,7);
+  const f = DB.fees.find(x=>x.studentId===student.id && x.month===month);
+  const expected = Number(student.monthlyFee||0);
+  const paid = f? Number(f.paid||0):0;
+  const due = Math.max(0, expected-paid);
+  const advance = Math.max(0, paid-expected);
+  let status='Due';
+  if(expected===0) status='—';
+  else if(paid>expected) status='Advance';
+  else if(paid>=expected && expected>0) status='Paid';
+  else if(paid>0) status='Partial';
+  return {expected,paid,due,advance,status,record:f};
+}
+function attendanceStatsFor(studentId){
+  const recs = DB.attendance.filter(a=>a.studentId===studentId);
+  const present = recs.filter(a=>a.status==='Present').length;
+  const absent = recs.filter(a=>a.status==='Absent').length;
+  const late = recs.filter(a=>a.status==='Late').length;
+  const cancelled = recs.filter(a=>a.status==='Cancelled').length;
+  const total = present+absent+late;
+  const pct = total>0 ? Math.round(((present+late*0.5)/total)*100) : null;
+  return {present,absent,late,cancelled,total,pct};
+}
+// One student can only have ONE attendance status per date — this updates the
+// existing record instead of pushing a duplicate, so re-marking (e.g. fixing
+// a mistake) actually corrects it rather than corrupting the stats with two
+// records for the same day.
+function upsertAttendance(studentId, date, status){
+  const existing = DB.attendance.find(a=>a.studentId===studentId && a.date===date);
+  if(existing){ existing.status = status; }
+  else{ DB.attendance.push({id:uid('att'), studentId, date, status}); }
+}
+function subjectProgress(studentId, subject){
+  const items = DB.syllabus.filter(s=>s.studentId===studentId && s.subject===subject);
+  if(items.length===0) return null;
+  const done = items.filter(i=>i.status==='Completed').length;
+  return Math.round((done/items.length)*100);
+}
+function examAverage(studentId, subject){
+  const list = DB.exams.filter(e=>e.studentId===studentId && (!subject||e.subject===subject) && (e.status||'Completed')==='Completed');
+  if(list.length===0) return null;
+  const pct = list.map(e=> e.total>0 ? (e.obtained/e.total*100):0);
+  return Math.round(pct.reduce((a,b)=>a+b,0)/pct.length);
+}
+
+/* =========================================================================
+   DASHBOARD
+   ========================================================================= */
+function renderDashboard(){
+  const iso = todayISO();
+  const todayIsOff = isOffDay(iso);
+  const {items} = buildDaySchedule(iso, dashboardMaghribCache);
+  const nowMin = nowMinutes();
+  const teaching = items.filter(i=>['madrasa','batch','private'].includes(i.type));
+  const current = todayIsOff ? null : teaching.find(i=>scheduleStatusFor(i,nowMin)==='now');
+  let next = todayIsOff ? null : teaching.find(i=>i.startMin>nowMin);
+  const hours = teaching.reduce((sum,i)=>sum+(i.endMin-i.startMin),0)/60;
+
+  // Nothing left to teach today (or today's off) — look ahead to tomorrow's
+  // fixed schedule so the Dashboard always shows a "next class" countdown
+  // rather than the card just disappearing once the day's classes are done.
+  let nextIsTomorrow = false;
+  let nextStartsInMin = next ? (next.startMin - nowMin) : null;
+  if(!next){
+    const tomorrowISO = addDaysISO(iso, 1);
+    const tomorrowSchedule = (DB.schedule && DB.schedule.length ? DB.schedule : defaultScheduleBlocks())
+      .map(s=>({...s, startMin:toMinutes(parseHHMM(s.start)), endMin:toMinutes(parseHHMM(s.end))}))
+      .filter(i=>['madrasa','batch','private'].includes(i.type))
+      .sort((a,b)=>a.startMin-b.startMin);
+    const tomorrowIsOff = isOffDay(tomorrowISO);
+    if(!tomorrowIsOff && tomorrowSchedule.length){
+      next = tomorrowSchedule[0];
+      nextIsTomorrow = true;
+      nextStartsInMin = (1440 - nowMin) + next.startMin;
+    }
+  }
+
+  const pendingHw = pendingHomeworkCount();
+  const exams14 = upcomingExams(14);
+  const unpaid = unpaidFeesCount();
+
+  function studyPlanForStudentOnDate(studentName, dateISO){
+    return (DB.studyPlan||[]).filter(p=>p.student===studentName && p.day===weekdayLong(dateISO));
+  }
+  function studyPlanBlockHTML(student, dateISO){
+    if(!student) return '';
+    const plan = studyPlanForStudentOnDate(student.name, dateISO);
+    if(plan.length===0) return '';
+    return `
+    <div class="divider"></div>
+    <div class="stopblock">
+      <div class="lbl">Planned for ${dateISO===todayISO()?'today':'that day'}</div>
+      ${plan.map(p=>`<div class="val">${escapeHTML(p.subject)}${p.topic?': '+escapeHTML(p.topic):''}</div>`).join('')}
+    </div>`;
+  }
+
+  let nextBlock = '';
+  if(current){
+    const student = current.studentId ? studentById(current.studentId) : null;
+    const remaining = current.endMin - nowMin;
+    nextBlock += `
+    <div class="card" style="border-color:rgba(224,164,88,0.4);">
+      <div class="card-title">Now Teaching</div>
+      <div class="row" style="align-items:flex-start;">
+        <div>
+          <div style="font-size:16px;font-weight:700;">${current.title.replace(/ — .*/,'')}</div>
+          <div class="page-sub" style="margin:2px 0 0;">${current.note||''}</div>
+        </div>
+        <div class="badge warn">ends in ${formatDuration(remaining)}</div>
+      </div>
+      ${studyPlanBlockHTML(student, iso)}
+      ${student ? `<button class="btn block" style="margin-top:10px;" data-open-student="${student.id}">Open ${student.name}</button>` : ''}
+    </div>`;
+  }
+  if(next){
+    const student = next.studentId ? studentById(next.studentId) : null;
+    const lastRec = student ? lastClassRecordAcrossSubjects(student.id) : null;
+    const nextDateISO = nextIsTomorrow ? addDaysISO(iso,1) : iso;
+    nextBlock += `
+    <div class="card">
+      <div class="card-title">Next Class${nextIsTomorrow?' (tomorrow)':''}</div>
+      <div class="row" style="align-items:flex-start;">
+        <div>
+          <div style="font-size:16px;font-weight:700;">${next.title.replace(/ — .*/,'')}</div>
+          <div class="page-sub" style="margin:2px 0 0;">${next.note||''}</div>
+        </div>
+        <div class="badge muted">${fmt12(fromMinutes(next.startMin))} · in ${formatDuration(nextStartsInMin)}</div>
+      </div>
+      ${lastRec ? `
+      <div class="divider"></div>
+      <div class="stopblock">
+        <div class="lbl">Last time you stopped at</div>
+        <div class="val">${lastRec.subject}: ${[lastRec.chapter,lastRec.topic,lastRec.page].filter(Boolean).join(' → ')||'—'}</div>
+      </div>` : ''}
+      ${studyPlanBlockHTML(student, nextDateISO)}
+      ${student ? `<button class="btn block" data-open-student="${student.id}">Open ${student.name}</button>` : ''}
+    </div>`;
+  }
+
+  const tasksToday = DB.tasks.filter(t=>t.date===iso && !t.completed).slice(0,5);
+  const backupDue = DB.students.length>0 && daysSinceLastBackup()>=BACKUP_REMINDER_DAYS;
+  const awaitingResults = awaitingResultsExams();
+  const todayWeeklyOff = isWeeklyOff(iso);
+  const todayPersonalOff = personalOffFor(iso);
+  const makeupsPending = pendingMakeups();
+
+  return `
+  <div class="page-sub">${readableDate(iso)} · ${DB.settings.location}</div>
+
+  ${backupDue? `
+  <div class="card" style="border-color:rgba(224,164,88,0.4);cursor:pointer;" data-nav-page="settings">
+    <div class="row">
+      <div style="font-size:13px;"><b>${DB.settings.lastManualBackupAt?`Been ${daysSinceLastBackup()} days since your last backup`:"You haven't backed up yet"}</b><br><span class="page-sub" style="margin:2px 0 0;">Tap to save a copy to Google Drive</span></div>
+      <div class="chev">›</div>
+    </div>
+  </div>` : ''}
+
+  ${makeupsPending.length? `
+  <div class="card" style="border-color:rgba(224,164,88,0.4);cursor:pointer;" data-nav-page="today">
+    <div class="row">
+      <div style="font-size:13px;"><b>${makeupsPending.length} makeup class${makeupsPending.length===1?'':'es'} still owed</b><br><span class="page-sub" style="margin:2px 0 0;">From ${makeupsPending.map(m=>m.date).join(', ')}</span></div>
+      <div class="chev">›</div>
+    </div>
+  </div>` : ''}
+
+  ${awaitingResults.length? `
+  <div class="card" style="border-color:rgba(224,122,111,0.4);">
+    <div class="card-title">Awaiting Results (${awaitingResults.length})</div>
+    <div class="list">
+      ${awaitingResults.map(e=>{
+        const st = studentById(e.studentId);
+        return `<div class="item" style="cursor:pointer;" data-add-marks="${e.studentId}|${e.id}">
+          <div class="dot" style="background:var(--err);"></div>
+          <div class="body"><div class="title">${escapeHTML(e.name)} — ${st?escapeHTML(st.name):'?'}</div><div class="meta">${escapeHTML(e.subject)} · was ${e.date}</div></div>
+          <div class="chev">›</div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>` : ''}
+
+  ${todayIsOff? `
+  <div class="card" style="border-color:${todayWeeklyOff?'rgba(111,163,216,0.4)':'rgba(224,164,88,0.4)'};text-align:center;padding:22px 16px;">
+    <div style="font-size:24px;margin-bottom:6px;">${todayWeeklyOff?'📅':'🌤️'}</div>
+    <div style="font-weight:700;font-size:15px;">${todayWeeklyOff?'Weekly Off Day':'Personal Off Day'}</div>
+    <div class="page-sub" style="margin-top:4px;">${todayPersonalOff&&todayPersonalOff.reason?escapeHTML(todayPersonalOff.reason):'No classes scheduled today'}</div>
+  </div>
+  ` : `
+  <div class="card">
+    <div class="card-title">Today's Overview</div>
+    <div class="grid3">
+      <div class="stat"><div class="num">${teaching.length}</div><div class="lbl">Classes today</div></div>
+      <div class="stat"><div class="num">${hours.toFixed(1)}h</div><div class="lbl">Teaching hours</div></div>
+      <div class="stat ${current?'hot':''}"><div class="num">${current?'Now':'—'}</div><div class="lbl">${current?current.title.replace(/ — .*/,''):'Free period'}</div></div>
+    </div>
+  </div>
+  `}
+
+  ${nextBlock}
+
+  <div class="card">
+    <div class="card-title">Quick Stats</div>
+    <div class="grid2">
+      <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${individualStudents().length}</div><div class="lbl">Active students</div></div>
+      <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${DB.students.filter(s=>!s.isGroup).length}</div><div class="lbl">Total students</div></div>
+      <div class="stat ${pendingHw>0?'hot':''}" data-stat-nav="homework" style="cursor:pointer;"><div class="num">${pendingHw}</div><div class="lbl">Pending homework</div></div>
+      <div class="stat ${exams14.length>0?'hot':''}" data-stat-nav="exams" style="cursor:pointer;"><div class="num">${exams14.length}</div><div class="lbl">Upcoming exams</div></div>
+      <div class="stat ${unpaid>0?'hot':''}" data-stat-nav="fees" style="grid-column:span 2;cursor:pointer;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees this month</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Today's Tasks</div>
+    ${tasksToday.length? `<div class="list">${tasksToday.map(t=>`
+      <div class="item">
+        <div class="dot" style="background:${t.priority==='High'?'var(--err)':t.priority==='Medium'?'var(--amber)':'var(--ink-faint)'}"></div>
+        <div class="body"><div class="title">${escapeHTML(t.title)}</div><div class="meta">${t.priority} priority</div></div>
+        <button class="btn sm" data-done-task="${t.id}">Done</button>
+      </div>`).join('')}</div>`
+      : `<div class="empty" style="padding:16px;">No tasks for today. <br><button class="btn sm" style="margin-top:8px;" data-nav-page="study">Add one</button></div>`}
+  </div>
+  `;
+}
+let dashboardMaghribCache = null;
+// Guards which date we've already fetched/are fetching for, so re-rendering the
+// dashboard (e.g. from the fetch's own completion) never re-triggers the fetch.
+let dashboardMaghribFetchedFor = null;
+function bindDashboard(){
+  const iso = todayISO();
+  if(dashboardMaghribFetchedFor !== iso){
+    dashboardMaghribFetchedFor = iso; // mark as in-flight BEFORE awaiting, to block duplicate triggers
+    PrayerService.getMaghribTime(iso).then(res=>{
+      dashboardMaghribCache = res.maghrib;
+      if(ROUTE.page==='dashboard'){ render(); }
+    });
+  }
+  document.getElementById('view').querySelectorAll('[data-open-student]').forEach(el=>{
+    el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent}));
+  });
+  document.getElementById('view').querySelectorAll('[data-done-task]').forEach(el=>{
+    el.addEventListener('click',()=>{ const t=DB.tasks.find(x=>x.id===el.dataset.doneTask); if(t){t.completed=true; saveDB(); render();} });
+  });
+  document.getElementById('view').querySelectorAll('[data-nav-page]').forEach(el=>{
+    el.addEventListener('click',()=>navigate(el.dataset.navPage));
+  });
+  document.getElementById('view').querySelectorAll('[data-stat-nav]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const dest = el.dataset.statNav;
+      if(dest==='homework') openPendingHomeworkModal();
+      else navigate(dest);
+    });
+  });
+  document.getElementById('view').querySelectorAll('[data-add-marks]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const [sid,eid] = el.dataset.addMarks.split('|');
+      openExamForm(sid, eid, true);
+    });
+  });
+}
+function matchStudent(matchObj){
+  // legacy helper, kept for any old references; schedule blocks now carry studentId directly
+  if(!matchObj) return null;
+  return DB.students.find(s=>s.name===matchObj.name) || null;
+}
+function lastClassRecordAcrossSubjects(studentId){
+  const recs = DB.classRecords.filter(r=>r.studentId===studentId);
+  if(recs.length===0) return null;
+  return recs.slice().sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt))[0];
+}
+
+/* =========================================================================
+   TODAY PAGE
+   ========================================================================= */
+let todayISOState = todayISO();
+let todayMaghribInfo = {maghrib:null,status:'loading',message:'Checking prayer time…'};
+let todayEditMode = false;
+
+function renderToday(){
+  const {items, conflict} = buildDaySchedule(todayISOState, todayMaghribInfo.maghrib);
+  const nowMin = todayISOState===todayISO() ? nowMinutes() : -1;
+  const examsToday = DB.exams.filter(e=>e.date===todayISOState);
+
+  if(todayEditMode) return renderScheduleEditor();
+
+  const weeklyOff = isWeeklyOff(todayISOState);
+  const personalOff = personalOffFor(todayISOState);
+
+  // merge exams into the visual timeline as extra rows, sorted by time
+  const examRows = examsToday.map(e=>{
+    const st = studentById(e.studentId);
+    return {isExam:true, exam:e, title:`Exam: ${e.name}`, note:`${e.subject}${st?' · '+st.name:''} · ${e.status||'Completed'}`, timeLabel: 'Exam'};
+  });
+
+  let offBanner = '';
+  if(weeklyOff){
+    offBanner = `
+    <div class="card" style="border-color:rgba(111,163,216,0.4);text-align:center;padding:24px 16px;">
+      <div style="font-size:26px;margin-bottom:6px;">📅</div>
+      <div style="font-weight:700;font-size:15px;">Weekly Off — ${escapeHTML(DB.settings.weeklyOffDay)}</div>
+      <div class="page-sub" style="margin-top:4px;">No classes scheduled. No makeup or salary impact.</div>
+    </div>`;
+  }else if(personalOff){
+    offBanner = `
+    <div class="card" style="border-color:rgba(224,164,88,0.4);">
+      <div class="row" style="align-items:flex-start;">
+        <div>
+          <div style="font-weight:700;font-size:15px;">Personal Off Day</div>
+          ${personalOff.reason?`<div class="page-sub" style="margin-top:2px;">${escapeHTML(personalOff.reason)}</div>`:''}
+        </div>
+        <button class="btn sm ghost" id="undoOffDayBtn">Undo</button>
+      </div>
+      ${personalOff.makeupNeeded? `
+        <div class="divider"></div>
+        <div class="badge ${personalOff.makeupDone?'ok':'warn'}">${personalOff.makeupDone?'✓ Makeup done':'Makeup needed'}${personalOff.makeupDate?' · '+personalOff.makeupDate:''}</div>
+        ${!personalOff.makeupDone?`<button class="btn sm block" style="margin-top:10px;" id="markMakeupDoneBtn">Mark Makeup Done</button>`:''}
+      ` : ''}
+    </div>`;
+  }
+
+  return `
+  <div class="row" style="margin-bottom:12px;">
+    <input type="date" id="todayDatePicker" value="${todayISOState}" style="background:var(--card2);border:1px solid var(--line2);border-radius:10px;padding:9px 10px;color:var(--ink);color-scheme:dark;flex:1;">
+    <button class="btn sm" id="todayJumpBtn">Today</button>
+    <button class="icon-btn" id="editScheduleBtn" title="Edit schedule">✎</button>
+  </div>
+  <div class="page-sub">${readableDate(todayISOState)}</div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="card-title" style="margin-bottom:2px;">Maghrib</div>
+        <div style="font-family:'Fraunces',serif;font-size:24px;">${todayMaghribInfo.maghrib?fmt12(parseHHMM(todayMaghribInfo.maghrib)):'—'}</div>
+      </div>
+      <button class="btn sm" id="refreshMaghribBtn">Refresh</button>
+    </div>
+    <div class="badge ${todayMaghribInfo.status==='ok'?'ok':todayMaghribInfo.status==='warn'?'warn':todayMaghribInfo.status==='err'?'err':'muted'}" style="margin-top:8px;">${todayMaghribInfo.message}</div>
+  </div>
+
+  ${offBanner}
+
+  ${(DB.sessionLogs&&DB.sessionLogs.length) ? `
+  <div class="card" style="cursor:pointer;" data-nav-page="reports">
+    <div class="row">
+      <div style="font-size:13px;"><b>Session Log</b><br><span class="page-sub" style="margin:2px 0 0;">${DB.sessionLogs.length} session${DB.sessionLogs.length===1?'':'s'} logged — full list & averages in Reports</span></div>
+      <div class="chev">›</div>
+    </div>
+  </div>` : ''}
+
+  ${conflict? `<div class="card" style="border-color:rgba(224,122,111,0.5);"><div class="badge err">⚠ Schedule conflict</div><div style="margin-top:8px;font-size:13px;">${conflict}</div></div>` : ''}
+
+  ${examRows.length? `<div class="card" style="padding:6px 14px;">${examRows.map(r=>`
+    <div class="timeline-item" style="cursor:pointer;" data-open-exam="${r.exam.id}">
+      <div class="t" style="color:var(--amber-soft);">${r.timeLabel}</div>
+      <div class="tbody"><div class="ttitle">${escapeHTML(r.title)}</div><div class="tnote">${escapeHTML(r.note)}</div></div>
+      <div class="chev">›</div>
+    </div>`).join('')}</div>` : ''}
+
+  ${weeklyOff||personalOff? '' : `
+  <div class="card" style="padding:6px 14px;">
+    ${items.map(it=>{
+      const status = it.type==='maghrib' ? '' : scheduleStatusFor(it,nowMin);
+      const student = it.studentId ? studentById(it.studentId) : null;
+      const clickable = student ? `data-open-student="${student.id}"` : '';
+      const isTeaching = ['madrasa','batch','private'].includes(it.type);
+      const isToday = todayISOState===todayISO();
+      const canEndNow = isTeaching && status==='now' && isToday;
+      const canStartEarly = isTeaching && status==='upcoming' && isToday;
+      const existingLog = isTeaching ? sessionLogFor(todayISOState, it.start) : null;
+      return `
+      <div class="timeline-item ${status==='now'?'now':''}" style="${student?'cursor:pointer;':''}" ${clickable}>
+        <div class="t">${it.type==='maghrib'?fmt12(fromMinutes(it.startMin)):fmt12(fromMinutes(it.startMin))+(it.endMin!==it.startMin?'–'+fmt12(fromMinutes(it.endMin)):'')}</div>
+        <div class="tbody">
+          <div class="ttitle">${it.title}${status==='now'?' · now':''}</div>
+          ${it.note?`<div class="tnote">${it.note}</div>`:''}
+          ${existingLog&&existingLog.actualStart? `<div class="tnote" style="color:var(--amber-soft);">Started early at ${fmt12(parseHHMM(existingLog.actualStart))}</div>` : ''}
+          ${existingLog&&existingLog.actualEnd? `<div class="tnote" style="color:var(--amber-soft);">Ended early at ${fmt12(parseHHMM(existingLog.actualEnd))}</div>` : ''}
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            ${canStartEarly && !(existingLog&&existingLog.actualStart)? `<button class="btn sm" data-start-session="${it.start}|${escapeHTML(it.title)}">Starting early — log it</button>` : ''}
+            ${canEndNow && !(existingLog&&existingLog.actualEnd)? `<button class="btn sm" data-end-session="${it.start}|${escapeHTML(it.title)}">Ended early — log it</button>` : ''}
+          </div>
+        </div>
+        ${student?'<div class="chev">›</div>':''}
+      </div>`;
+    }).join('')}
+  </div>
+  <button class="btn block" id="markOffDayBtn" style="margin-bottom:8px;">Mark This Day Off (personal)</button>
+  `}
+  `;
+}
+function sessionLogFor(date, scheduledStart){
+  return (DB.sessionLogs||[]).find(l=>l.date===date && l.scheduledStart===scheduledStart) || null;
+}
+// Actual minutes taught: uses actualStart/actualEnd where logged, otherwise
+// falls back to the scheduled time for that side — so a session with only
+// an early-start log still measures correctly against its scheduled end.
+function sessionActualMinutes(log){
+  const startT = log.actualStart ? parseHHMM(log.actualStart) : parseHHMM(log.scheduledStart);
+  const endT = log.actualEnd ? parseHHMM(log.actualEnd) : parseHHMM(log.scheduledEnd);
+  return Math.max(0, toMinutes(endT) - toMinutes(startT));
+}
+
+// Guards which date we've already fetched/are fetching for, so a normal render
+// (including the re-render the fetch itself triggers) never re-triggers a fetch.
+// Only an explicit date change or the Refresh button forces a new call.
+let todayMaghribFetchedFor = null;
+function loadMaghribForToday(force){
+  if(!force && todayMaghribFetchedFor === todayISOState) return; // already fetched/fetching for this date
+  todayMaghribFetchedFor = todayISOState; // mark before awaiting to block duplicate triggers
+  todayMaghribInfo = {maghrib:todayMaghribInfo.maghrib, status:'loading', message:'Checking prayer time…'};
+  PrayerService.getMaghribTime(todayISOState, {forceRefresh:force}).then(res=>{
+    todayMaghribInfo = res;
+    if(ROUTE.page==='today') render();
+  });
+}
+
+function bindToday(){
+  if(todayEditMode){ bindScheduleEditor(); return; }
+  loadMaghribForToday(false);
+  const view = document.getElementById('view');
+  view.querySelector('#todayDatePicker').addEventListener('change', e=>{
+    todayISOState = e.target.value || todayISO();
+    render();
+  });
+  view.querySelector('#todayJumpBtn').addEventListener('click', ()=>{
+    todayISOState = todayISO();
+    render();
+  });
+  view.querySelector('#editScheduleBtn').addEventListener('click', ()=>{ todayEditMode = true; render(); });
+  const rf = view.querySelector('#refreshMaghribBtn');
+  if(rf) rf.addEventListener('click', ()=>loadMaghribForToday(true));
+  view.querySelectorAll('[data-open-student]').forEach(el=>{
+    el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent}));
+  });
+  view.querySelectorAll('[data-open-exam]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const exam = DB.exams.find(x=>x.id===el.dataset.openExam);
+      if(exam) openExamForm(exam.studentId, exam.id);
+    });
+  });
+  view.querySelectorAll('[data-nav-page]').forEach(el=>{
+    el.addEventListener('click',()=>navigate(el.dataset.navPage));
+  });
+  const markBtn = view.querySelector('#markOffDayBtn');
+  if(markBtn) markBtn.addEventListener('click', ()=>openOffDayForm(todayISOState));
+  const undoBtn = view.querySelector('#undoOffDayBtn');
+  if(undoBtn) undoBtn.addEventListener('click', ()=>{
+    if(confirm('Remove this off-day mark?')){
+      DB.offDays = (DB.offDays||[]).filter(o=>o.date!==todayISOState);
+      saveDB(); render(); toast('Off day removed');
+    }
+  });
+  const makeupBtn = view.querySelector('#markMakeupDoneBtn');
+  if(makeupBtn) makeupBtn.addEventListener('click', ()=>{
+    const off = personalOffFor(todayISOState);
+    if(off){ off.makeupDone = true; saveDB(); render(); toast('Makeup marked done'); }
+  });
+  view.querySelectorAll('[data-start-session]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const [scheduledStart, title] = el.dataset.startSession.split('|');
+      logSessionDeviation(scheduledStart, title, {actualStart: fmt24(nowDhakaParts())});
+    });
+  });
+  view.querySelectorAll('[data-end-session]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const [scheduledStart, title] = el.dataset.endSession.split('|');
+      logSessionDeviation(scheduledStart, title, {actualEnd: fmt24(nowDhakaParts())});
+    });
+  });
+}
+// Upserts a session log entry for today's block at scheduledStart — a block
+// can accumulate BOTH an early start and an early end over the course of the
+// same day without creating duplicate entries.
+function logSessionDeviation(scheduledStart, title, fields){
+  const {items} = buildDaySchedule(todayISOState, todayMaghribInfo.maghrib);
+  const block = items.find(i=>i.start===scheduledStart && i.title===title);
+  if(!block) return;
+  DB.sessionLogs = DB.sessionLogs || [];
+  let log = DB.sessionLogs.find(l=>l.date===todayISOState && l.scheduledStart===scheduledStart);
+  if(!log){
+    log = {id: uid('slog'), date: todayISOState, studentId: block.studentId||null, title: block.title,
+      scheduledStart: block.start, scheduledEnd: block.end, createdAt: new Date().toISOString()};
+    DB.sessionLogs.push(log);
+  }
+  Object.assign(log, fields);
+  saveDB(); render();
+  toast(`Logged — see full history in Reports → Session Log`);
+}
+
+/* ---------- Personal off-day form ---------- */
+function openOffDayForm(iso){
+  openModal(`
+    ${modalHead('Mark Off Day — '+readableDate(iso))}
+    <div class="field"><label>Reason (optional)</label><input id="od_reason" placeholder="e.g. felt unwell, personal work"></div>
+    <div class="field"><label><input type="checkbox" id="od_makeup" style="width:auto;margin-right:6px;">This class needs to be made up</label></div>
+    <div class="field" id="od_makeupDateWrap" style="display:none;"><label>Makeup date (optional)</label><input type="date" id="od_makeupDate"></div>
+    <div class="hint" style="margin-bottom:14px;">This is a personal/unplanned off day, not your weekly off. It won't automatically change any salary numbers — the Income Reference on the Reports page just uses it to remind you a makeup class might be owed.</div>
+    <div class="modal-actions"><button class="btn primary block" id="od_saveBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#od_makeup').addEventListener('change', (e)=>{
+      root.querySelector('#od_makeupDateWrap').style.display = e.target.checked ? 'block' : 'none';
+    });
+    root.querySelector('#od_saveBtn').addEventListener('click',()=>{
+      DB.offDays = DB.offDays || [];
+      DB.offDays = DB.offDays.filter(o=>o.date!==iso); // one off-day record per date
+      DB.offDays.push({
+        id: uid('off'), date: iso,
+        reason: root.querySelector('#od_reason').value.trim(),
+        makeupNeeded: root.querySelector('#od_makeup').checked,
+        makeupDate: root.querySelector('#od_makeupDate').value || null,
+        makeupDone: false,
+        createdAt: new Date().toISOString()
+      });
+      saveDB(); closeModal(); render(); toast('Marked as off day');
+    });
+  }});
+}
+
+/* ---------- Schedule editor (inline on Today page) ---------- */
+function renderScheduleEditor(){
+  const blocks = (DB.schedule||[]).slice().sort((a,b)=>a.start.localeCompare(b.start));
+  const st = DB.settings;
+  return `
+  <div class="row" style="margin-bottom:14px;">
+    <h2 style="font-size:17px;">Edit Schedule</h2>
+    <button class="btn sm primary" id="doneEditScheduleBtn">Done</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Maghrib-linked Class</div>
+    <div class="field"><label>Student</label>
+      <select id="se_maghribStudent">
+        <option value="">— none —</option>
+        ${DB.students.map(s=>`<option value="${s.id}" ${st.maghribStudentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Starts after Maghrib (min)</label><input type="number" id="se_offset" value="${st.maghribOffsetMin}"></div>
+      <div class="field"><label>Duration (min)</label><input type="number" id="se_duration" value="${st.maghribDurationMin}"></div>
+    </div>
+  </div>
+
+  <div class="sub-heading">Fixed Blocks</div>
+  <div class="hint" style="margin-top:-4px;margin-bottom:10px;">"Type" controls whether a block counts toward your teaching-hours/classes stats on the Dashboard. Use "Personal / Other" for anything that isn't actual teaching — otherwise it gets counted as a class by mistake.</div>
+  <div class="list" id="se_blockList">
+    ${blocks.map(b=>`
+      <div class="card" style="padding:12px 14px;margin-bottom:10px;" data-block="${b.id}">
+        <div class="grid2">
+          <div class="field"><label>Start</label><input type="time" data-f="start" value="${b.start}"></div>
+          <div class="field"><label>End</label><input type="time" data-f="end" value="${b.end}"></div>
+        </div>
+        <div class="field"><label>Title</label><input data-f="title" value="${escapeHTML(b.title)}"></div>
+        <div class="field"><label>Type</label>
+          <select data-f="type">
+            ${[['madrasa','Madrasa class — counts as teaching'],['batch','Batch class — counts as teaching'],['private','Private class — counts as teaching'],['break','Break — not teaching'],['transit','Transit — not teaching'],['rest','Rest / Free — not teaching'],['other','Personal / Other — not teaching']].map(([v,l])=>`<option value="${v}" ${b.type===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Note</label><input data-f="note" value="${escapeHTML(b.note||'')}"></div>
+        <div class="field"><label>Link to student/batch (optional)</label>
+          <select data-f="studentId">
+            <option value="">— none —</option>
+            ${DB.students.map(s=>`<option value="${s.id}" ${b.studentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn danger sm" data-del-block="${b.id}">Delete block</button>
+      </div>
+    `).join('')}
+  </div>
+  <button class="btn block" id="se_addBlockBtn" style="margin-bottom:16px;">+ Add Block</button>
+  <button class="btn primary block" id="se_saveBtn">Save Schedule</button>
+  `;
+}
+
+function bindScheduleEditor(){
+  const view = document.getElementById('view');
+  view.querySelector('#doneEditScheduleBtn').addEventListener('click', ()=>{ todayEditMode=false; render(); });
+
+  // Reads whatever is currently sitting in the form fields back into DB.schedule.
+  // Called before Add/Delete so those actions never silently wipe edits you'd
+  // already made to OTHER blocks in the same session — that was the bug.
+  function harvestFormIntoSchedule(){
+    view.querySelectorAll('[data-block]').forEach(card=>{
+      const id = card.dataset.block;
+      const blk = DB.schedule.find(b=>b.id===id);
+      if(!blk) return;
+      blk.start = card.querySelector('[data-f="start"]').value || blk.start;
+      blk.end = card.querySelector('[data-f="end"]').value || blk.end;
+      blk.title = card.querySelector('[data-f="title"]').value.trim() || blk.title;
+      blk.type = card.querySelector('[data-f="type"]').value || blk.type;
+      blk.note = card.querySelector('[data-f="note"]').value.trim();
+      blk.studentId = card.querySelector('[data-f="studentId"]').value || null;
+    });
+    const maghribSel = view.querySelector('#se_maghribStudent');
+    if(maghribSel){
+      DB.settings.maghribStudentId = maghribSel.value || null;
+      DB.settings.maghribOffsetMin = Number(view.querySelector('#se_offset').value) || DB.settings.maghribOffsetMin;
+      DB.settings.maghribDurationMin = Number(view.querySelector('#se_duration').value) || DB.settings.maghribDurationMin;
+    }
+  }
+
+  view.querySelector('#se_addBlockBtn').addEventListener('click', ()=>{
+    harvestFormIntoSchedule();
+    DB.schedule.push({id:uid('blk'), start:'16:00', end:'17:00', title:'New Block', note:'', type:'other', studentId:null});
+    saveDB(); render();
+  });
+  view.querySelectorAll('[data-del-block]').forEach(el=>el.addEventListener('click',()=>{
+    if(confirm('Delete this schedule block?')){
+      harvestFormIntoSchedule();
+      DB.schedule = DB.schedule.filter(b=>b.id!==el.dataset.delBlock); saveDB(); render();
+    }
+  }));
+  view.querySelector('#se_saveBtn').addEventListener('click', ()=>{
+    harvestFormIntoSchedule();
+    saveDB();
+    todayEditMode = false;
+    render();
+    toast('Schedule saved');
+  });
+}
+function escapeHTML(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+
+/* =========================================================================
+   STUDENTS — list
+   ========================================================================= */
+let studentsFilter = 'all';
+function renderStudents(){
+  const filters = [['all','All'],['madrasa','Madrasa'],['batch','Batches'],['private','Private']];
+  let list = DB.students.slice();
+  if(studentsFilter!=='all') list = list.filter(s=>s.type===studentsFilter);
+  list.sort((a,b)=> (b.active!==false) - (a.active!==false) || a.name.localeCompare(b.name));
+
+  return `
+  <div class="tabs">
+    ${filters.map(([id,label])=>`<div class="tab ${studentsFilter===id?'active':''}" data-filter="${id}">${label}</div>`).join('')}
+  </div>
+  <button class="btn primary block" id="addStudentBtn" style="margin-bottom:14px;">+ Add Student / Batch</button>
+  ${list.length===0? `<div class="empty"><div class="big">🎓</div>No students yet.</div>` : `
+  <div class="list">
+    ${list.map(s=>{
+      const fee = feeStatusFor(s);
+      const parentBatch = s.batchId ? studentById(s.batchId) : null;
+      return `
+      <div class="item" data-open="${s.id}">
+        <div class="dot" style="background:${s.active===false?'var(--ink-faint)':typeColor(s.type)}"></div>
+        <div class="body">
+          <div class="title">${escapeHTML(s.name)} ${s.isGroup?'<span class="badge muted">Group</span>':''} ${s.active===false?'<span class="badge muted">Inactive</span>':''}</div>
+          <div class="meta">${typeLabel(s.type)}${s.isGroup?` · ${batchMembers(s.id).length} member${batchMembers(s.id).length===1?'':'s'}`:''} · Class ${escapeHTML(s.class||'—')} ${parentBatch?`· via ${escapeHTML(parentBatch.name)}`:''} ${!s.isGroup&&fee.expected>0?`· <span style="color:${fee.status==='Paid'||fee.status==='Advance'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</span>`:''}</div>
+        </div>
+        <div class="chev">›</div>
+      </div>`;
+    }).join('')}
+  </div>`}
+  `;
+}
+function typeLabel(t){ return t==='madrasa'?'Madrasa':t==='batch'?'Batch':'Private'; }
+function typeColor(t){ return t==='madrasa'?'var(--blue)':t==='batch'?'var(--teal)':'var(--amber)'; }
+
+function bindStudents(){
+  const view = document.getElementById('view');
+  view.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{studentsFilter=el.dataset.filter; render();}));
+  view.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.open})));
+  document.getElementById('addStudentBtn').addEventListener('click',()=>openStudentForm());
+}
+
+/* =========================================================================
+   STUDENT DETAIL
+   ========================================================================= */
+// A group (batch, madrasa class, etc.) gets the SAME tabs as any individual
+// student — being a group only ADDS a Members section to Overview and a
+// bulk-record option to Class Records. It must never REMOVE access to a
+// group's own Fees/Homework/Attendance/Exams data — that data doesn't
+// disappear when isGroup is set, but it becomes unreachable if the tab that
+// shows it is gone, which is exactly the bug this fixes.
+const STUDENT_TABS = [['overview','Overview'],['records','Class Records'],['homework','Homework'],['attendance','Attendance'],['exams','Exams'],['fees','Fees'],['syllabus','Progress']];
+
+function renderStudentDetail(id, tab){
+  const s = studentById(id);
+  if(!s) return `<div class="empty">Student not found.</div>`;
+  const isGroup = s.isGroup===true;
+  const tabs = STUDENT_TABS;
+  let body='';
+  if(tab==='overview') body = isGroup ? batchOverviewTab(s) : studentOverviewTab(s);
+  else if(tab==='records') body = isGroup ? batchRecordsTab(s) : studentRecordsTab(s);
+  else if(tab==='homework') body = studentHomeworkTab(s);
+  else if(tab==='attendance') body = studentAttendanceTab(s);
+  else if(tab==='exams') body = studentExamsTab(s);
+  else if(tab==='fees') body = studentFeesTab(s);
+  else if(tab==='syllabus') body = studentSyllabusTab(s);
+
+  const parentBatch = s.batchId ? studentById(s.batchId) : null;
+
+  return `
+  <button class="btn sm ghost" id="backToStudents" style="margin-bottom:10px;">‹ Students</button>
+  <div class="row" style="align-items:flex-start;margin-bottom:6px;">
+    <div>
+      <h2 style="font-size:19px;">${escapeHTML(s.name)} ${isGroup?'<span class="badge muted">Group</span>':''}</h2>
+      <div class="page-sub" style="margin:2px 0 0;">${typeLabel(s.type)} · Class ${escapeHTML(s.class||'—')}${s.school?' · '+escapeHTML(s.school):''}</div>
+      ${parentBatch? `<div class="page-sub" style="margin:2px 0 0;cursor:pointer;color:var(--amber-soft);" data-open-student="${parentBatch.id}">Part of: ${escapeHTML(parentBatch.name)} ›</div>`:''}
+    </div>
+    <button class="icon-btn" id="editStudentBtn">✎</button>
+  </div>
+  <div class="tabs">
+    ${tabs.map(([id2,label])=>`<div class="tab ${tab===id2?'active':''}" data-tab="${id2}">${label}</div>`).join('')}
+  </div>
+  ${body}
+  `;
+}
+
+function batchOverviewTab(s){
+  const members = batchMembers(s.id);
+  const subjects = s.subjects && s.subjects.length ? s.subjects : ['General'];
+  const fee = feeStatusFor(s);
+  const att = attendanceStatsFor(s.id);
+  return `
+  <div class="card">
+    <div class="card-title">Shared Subjects</div>
+    <div class="chip-select">${subjects.map(subj=>`<span class="chip on">${escapeHTML(subj)}</span>`).join('')}</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Last Taught — shared with the group</div>
+    ${subjects.map(subj=>{
+      const rec = lastClassRecord(s.id, subj);
+      return `
+      <div class="stopblock">
+        <div class="lbl">${escapeHTML(subj)}</div>
+        ${rec? `
+          <div class="val">${[rec.chapter,rec.topic,rec.page].filter(Boolean).join(' → ')||'—'}</div>
+          <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">HOMEWORK: ${escapeHTML(rec.homework||'—')}</div>
+          <div style="font-size:11.5px;color:var(--ink-faint);">NEXT: ${escapeHTML(rec.nextTopic||'—')}</div>
+        ` : `<div class="val" style="color:var(--ink-faint);">No class recorded yet.</div>`}
+      </div>`;
+    }).join('')}
+    <button class="btn primary block" data-quick-record-batch="${s.id}" style="margin-top:6px;">+ Record Today's Class</button>
+  </div>
+
+  ${(fee.expected>0 || att.total>0) ? `
+  <div class="grid2">
+    <div class="card"><div class="card-title">This Group's Own Attendance</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;">${att.pct!==null?att.pct+'%':'—'}</div><div class="page-sub">See the Attendance tab for details</div></div>
+    <div class="card"><div class="card-title">This Group's Own Fee</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">See the Fees tab for details</div></div>
+  </div>
+  <div class="hint" style="margin-bottom:14px;">This is the group's own record — separate from any individual members below. Use whichever fits how you actually track this group.</div>
+  ` : ''}
+
+  <div class="card">
+    <div class="row" style="margin-bottom:10px;"><div class="card-title" style="margin:0;">Members (${members.length})</div><button class="btn sm" data-add-member="${s.id}">+ Add Member</button></div>
+    ${members.length===0? `<div class="page-sub">No members yet. Adding members is optional — only do it if you want to track specific students inside this group individually (their own fee, attendance, progress). If you're just tracking the group as a whole, the Homework/Attendance/Exams/Fees tabs above work directly on the group itself.</div>` : `
+    <div class="list">
+      ${members.map(m=>{
+        const mfee = feeStatusFor(m);
+        const canMarkPaid = mfee.expected>0 && mfee.status!=='Paid' && mfee.status!=='Advance';
+        return `
+        <div class="item">
+          <div class="dot" style="background:${typeColor(m.type)}" data-open-student="${m.id}"></div>
+          <div class="body" data-open-student="${m.id}" style="cursor:pointer;">
+            <div class="title">${escapeHTML(m.name)}</div>
+            <div class="meta">Class ${escapeHTML(m.class||'—')} ${mfee.expected>0?`· <span style="color:${mfee.status==='Paid'||mfee.status==='Advance'?'var(--ok)':mfee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${mfee.status}</span>`:'· no fee set'}</div>
+          </div>
+          ${canMarkPaid? `<button class="btn sm" data-mark-paid="${m.id}|${todayISO().slice(0,7)}">Mark Paid</button>` : `<div class="chev" data-open-student="${m.id}" style="cursor:pointer;">›</div>`}
+        </div>`;
+      }).join('')}
+    </div>`}
+  </div>
+  `;
+}
+
+function batchRecordsTab(s){
+  const recs = DB.classRecords.filter(r=>r.studentId===s.id).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
+  return `
+  <div class="grid2" style="margin-bottom:12px;">
+    <button class="btn primary block" data-quick-record-batch="${s.id}">+ Record (with attendance)</button>
+    <button class="btn block" data-add-record="${s.id}">+ Simple Record</button>
+  </div>
+  ${recs.length===0? `<div class="empty">No class records yet.</div>` : `
+  <div class="list">
+    ${recs.map(r=>`
+      <div class="card" style="padding:12px 14px;margin-bottom:10px;">
+        <div class="row"><div class="badge muted">${escapeHTML(r.subject)}</div><div class="page-sub" style="margin:0;">${r.date}</div></div>
+        <div style="margin-top:8px;font-size:13.5px;"><b>Covered:</b> ${[r.chapter,r.topic,r.page].filter(Boolean).join(' → ')||'—'}</div>
+        ${r.completed?`<div style="font-size:13px;color:var(--ink-dim);margin-top:4px;">${escapeHTML(r.completed)}</div>`:''}
+        <div style="font-size:12.5px;color:var(--ink-faint);margin-top:6px;">Homework: ${escapeHTML(r.homework||'—')} ${r.homeworkDeadline?'(due '+r.homeworkDeadline+')':''}</div>
+        <div style="font-size:12.5px;color:var(--ink-faint);">Next: ${escapeHTML(r.nextTopic||'—')}</div>
+        <div style="margin-top:8px;display:flex;gap:8px;">
+          <button class="btn sm ghost" data-del-record="${r.id}">Delete</button>
+        </div>
+      </div>
+    `).join('')}
+  </div>`}
+  `;
+}
+
+function studentOverviewTab(s){
+  const subjects = s.subjects && s.subjects.length ? s.subjects : ['General'];
+  const fee = feeStatusFor(s);
+  const att = attendanceStatsFor(s.id);
+  return `
+  <div class="card">
+    <div class="card-title">Last Stopping Point — by subject</div>
+    ${subjects.map(subj=>{
+      const rec = lastClassRecord(s.id, subj);
+      const isShared = rec && rec.studentId===s.batchId;
+      return `
+      <div class="stopblock">
+        <div class="lbl">${escapeHTML(subj)}${isShared?' <span style="opacity:0.7;">(from batch)</span>':''}</div>
+        ${rec? `
+          <div class="val">${[rec.chapter,rec.topic,rec.page].filter(Boolean).join(' → ')||'—'}</div>
+          <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">HOMEWORK: ${escapeHTML(rec.homework||'—')}</div>
+          <div style="font-size:11.5px;color:var(--ink-faint);">NEXT: ${escapeHTML(rec.nextTopic||'—')}</div>
+        ` : `<div class="val" style="color:var(--ink-faint);">No class recorded yet.</div>`}
+      </div>`;
+    }).join('')}
+    <button class="btn primary block" data-quick-record="${s.id}" style="margin-top:6px;">+ Record Today's Class${s.batchId?' (personal note)':''}</button>
+  </div>
+  <div class="grid2">
+    <div class="card"><div class="card-title">Attendance</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;">${att.pct!==null?att.pct+'%':'—'}</div><div class="page-sub">Present ${att.present} · Absent ${att.absent} · Late ${att.late}</div></div>
+    <div class="card"><div class="card-title">Fee (this month)</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">${fee.expected>0?`Due ${fmtMoney(fee.due)}`:'No fee set'}</div></div>
+  </div>
+  ${s.guardianPhone||s.notes? `<div class="card"><div class="card-title">Notes</div>${s.notes?`<div style="margin-bottom:8px;">${escapeHTML(s.notes)}</div>`:''}${s.guardianPhone?`<div class="page-sub">Guardian: ${escapeHTML(s.guardianName||'')} ${s.guardianPhone?' · '+escapeHTML(s.guardianPhone):''}</div>`:''}</div>`:''}
+  ${(()=>{
+    const logs = (DB.sessionLogs||[]).filter(l=>l.studentId===s.id).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
+    if(logs.length===0) return '';
+    const mins = logs.map(sessionActualMinutes);
+    const total = mins.reduce((a,b)=>a+b,0);
+    const avg = total/logs.length;
+    return `
+    <div class="card">
+      <div class="card-title">Session Log — actual time taught</div>
+      <div class="grid3" style="margin-bottom:10px;">
+        <div class="stat"><div class="num">${logs.length}</div><div class="lbl">Sessions</div></div>
+        <div class="stat"><div class="num">${formatDuration(total)}</div><div class="lbl">Total taught</div></div>
+        <div class="stat"><div class="num">${formatDuration(avg)}</div><div class="lbl">Avg. per session</div></div>
+      </div>
+      ${logs.slice(0,10).map(l=>{
+        return `<div class="two-col-item"><span>${l.date}</span><span class="page-sub" style="margin:0;">${formatDuration(sessionActualMinutes(l))} taught</span></div>`;
+      }).join('')}
+      ${logs.length>10? `<div class="page-sub" style="margin-top:6px;">+ ${logs.length-10} more — full log on the Reports page.</div>` : ''}
+    </div>`;
+  })()}
+  `;
+}
+
+function studentRecordsTab(s){
+  const recs = DB.classRecords.filter(r=>r.studentId===s.id).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
+  return `
+  <button class="btn primary block" data-add-record="${s.id}" style="margin-bottom:12px;">+ New Class Record${s.batchId?' (personal note)':''}</button>
+  ${s.batchId? `<div class="hint" style="margin-bottom:12px;">Records taught to the whole batch show up on the Overview tab automatically. This tab is for personal notes specific to ${escapeHTML(s.name)}.</div>` : ''}
+  ${recs.length===0? `<div class="empty">No class records yet.</div>` : `
+  <div class="list">
+    ${recs.map(r=>`
+      <div class="card" style="padding:12px 14px;margin-bottom:10px;">
+        <div class="row"><div class="badge muted">${escapeHTML(r.subject)}</div><div class="page-sub" style="margin:0;">${r.date}</div></div>
+        <div style="margin-top:8px;font-size:13.5px;"><b>Covered:</b> ${[r.chapter,r.topic,r.page].filter(Boolean).join(' → ')||'—'}</div>
+        ${r.completed?`<div style="font-size:13px;color:var(--ink-dim);margin-top:4px;">${escapeHTML(r.completed)}</div>`:''}
+        <div style="font-size:12.5px;color:var(--ink-faint);margin-top:6px;">Homework: ${escapeHTML(r.homework||'—')} ${r.homeworkDeadline?'(due '+r.homeworkDeadline+')':''}</div>
+        <div style="font-size:12.5px;color:var(--ink-faint);">Next: ${escapeHTML(r.nextTopic||'—')}</div>
+        ${r.weakness?`<div style="font-size:12.5px;color:var(--err);margin-top:4px;">Weakness: ${escapeHTML(r.weakness)}</div>`:''}
+        <div style="margin-top:8px;display:flex;gap:8px;">
+          <button class="btn sm ghost" data-del-record="${r.id}">Delete</button>
+        </div>
+      </div>
+    `).join('')}
+  </div>`}
+  `;
+}
+
+function studentHomeworkTab(s){
+  const hw = DB.homework.filter(h=>h.studentId===s.id).sort((a,b)=>b.dueDate.localeCompare(a.dueDate));
+  return `
+  <button class="btn primary block" data-add-hw="${s.id}" style="margin-bottom:12px;">+ Assign Homework</button>
+  ${hw.length===0? `<div class="empty">No homework recorded.</div>` : `
+  <div class="list">
+    ${hw.map(h=>`
+      <div class="item">
+        <div class="dot" style="background:${hwColor(h.status)}"></div>
+        <div class="body">
+          <div class="title">${escapeHTML(h.subject)}: ${escapeHTML(h.homework)}</div>
+          <div class="meta">Due ${h.dueDate} · ${h.status}</div>
+        </div>
+        <select data-hw-status="${h.id}" style="background:var(--card2);border:1px solid var(--line2);border-radius:8px;padding:4px 6px;font-size:11.5px;">
+          ${['Pending','Submitted','Checked','Late','Missing'].map(st=>`<option value="${st}" ${h.status===st?'selected':''}>${st}</option>`).join('')}
+        </select>
+      </div>
+    `).join('')}
+  </div>`}
+  `;
+}
+function hwColor(status){ return {Pending:'var(--amber)',Submitted:'var(--blue)',Checked:'var(--ok)',Late:'var(--err)',Missing:'var(--err)'}[status]||'var(--ink-faint)'; }
+
+function studentAttendanceTab(s){
+  const att = attendanceStatsFor(s.id);
+  const recs = DB.attendance.filter(a=>a.studentId===s.id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30);
+  return `
+  <div class="card">
+    <div class="card-title">Summary</div>
+    <div class="grid3">
+      <div class="stat"><div class="num">${att.present}</div><div class="lbl">Present</div></div>
+      <div class="stat"><div class="num">${att.absent}</div><div class="lbl">Absent</div></div>
+      <div class="stat"><div class="num">${att.pct!==null?att.pct+'%':'—'}</div><div class="lbl">Rate</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Mark Today</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${['Present','Absent','Late','Cancelled'].map(st=>`<button class="btn sm" data-mark-att="${s.id}|${st}">${st}</button>`).join('')}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Recent</div>
+    ${recs.length===0?`<div class="page-sub">No attendance marked yet.</div>`:`<div class="list">${recs.map(a=>`
+      <div class="two-col-item" style="cursor:pointer;" data-edit-att="${s.id}|${a.date}"><span>${a.date}</span><span class="badge ${a.status==='Present'?'ok':a.status==='Absent'?'err':'warn'}">${a.status} ✎</span></div>
+    `).join('')}</div>`}
+  </div>
+  `;
+}
+
+function studentExamsTab(s){
+  const exams = DB.exams.filter(e=>e.studentId===s.id).sort((a,b)=>b.date.localeCompare(a.date));
+  const avg = examAverage(s.id);
+  return `
+  <button class="btn primary block" data-add-exam="${s.id}" style="margin-bottom:12px;">+ Add / Schedule Exam</button>
+  ${avg!==null?`<div class="card"><div class="card-title">Average (completed exams)</div><div style="font-family:'Fraunces',serif;font-size:26px;">${avg}%</div></div>`:''}
+  ${exams.length===0? `<div class="empty">No exams recorded.</div>` : `<div class="list">${exams.map(e=>{
+    const isScheduled = (e.status||'Completed')==='Scheduled';
+    const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
+    return `<div class="item" style="cursor:pointer;" data-edit-exam="${e.id}">
+      <div class="dot" style="background:${isScheduled?'var(--amber)':pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(e.name)} · ${escapeHTML(e.subject)}</div><div class="meta">${e.date} · ${isScheduled?'Scheduled — no marks yet':`${e.obtained}/${e.total} = ${pct}%`}</div></div>
+      <div class="chev">›</div>
+    </div>`;
+  }).join('')}</div>`}
+  `;
+}
+
+function studentFeesTab(s){
+  const months = monthsWindow(6,2); // 2 months ahead (for advance) + current + 6 back
+  return `
+  <div class="card"><div class="card-title">Monthly Fee</div><div style="font-family:'Fraunces',serif;font-size:24px;">${fmtMoney(s.monthlyFee||0)}</div></div>
+  <button class="btn primary block" data-record-payment="${s.id}" style="margin-bottom:12px;">+ Record Payment</button>
+  <div class="list">
+  ${months.map(m=>{
+    const f = feeStatusFor(s,m);
+    return `
+    <div class="card" style="padding:12px 14px;margin-bottom:10px;">
+      <div class="row">
+        <b>${monthLabel(m)}</b>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="badge ${feeBadgeClass(f.status)}">${f.status}${f.status==='Advance'?' +'+fmtMoney(f.advance):''}</span>
+          <button class="icon-btn" style="width:28px;height:28px;font-size:12px;" data-edit-fee="${s.id}|${m}" title="Edit / correct this month">✎</button>
+        </div>
+      </div>
+      <div class="page-sub" style="margin-top:4px;">Paid ${fmtMoney(f.paid)} of ${fmtMoney(f.expected)} · Due ${fmtMoney(f.due)}</div>
+      ${f.expected>0 && f.status!=='Paid' && f.status!=='Advance'?`<button class="btn sm" style="margin-top:8px;" data-mark-paid="${s.id}|${m}">Mark fully paid</button>`:''}
+    </div>`;
+  }).join('')}
+  </div>
+  `;
+}
+function feeBadgeClass(status){ return status==='Paid'?'ok':status==='Advance'?'ok':status==='Partial'?'warn':'err'; }
+function monthsWindow(pastCount, futureCount){
+  const arr=[]; const d=new Date(todayISO()+'T12:00:00');
+  for(let i=(futureCount||0); i>=-(pastCount||0); i--){
+    const y=d.getFullYear(), m=d.getMonth()+1-i; const dd=new Date(y,m-1,1);
+    arr.push(dd.toISOString().slice(0,7));
+  }
+  return arr;
+}
+function lastNMonths(n){
+  const arr=[]; const d=new Date(todayISO()+'T12:00:00');
+  for(let i=0;i<n;i++){ const y=d.getFullYear(),m=d.getMonth()+1-i; const dd=new Date(y,m-1,1); arr.push(dd.toISOString().slice(0,7)); }
+  return arr;
+}
+function monthLabel(m){ const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
+
+function studentSyllabusTab(s){
+  const subjects = s.subjects && s.subjects.length? s.subjects:['General'];
+  return `
+  <div class="grid2" style="margin-bottom:12px;">
+    <button class="btn primary block" data-add-syllabus="${s.id}">+ Add Item</button>
+    <button class="btn block" data-copy-syllabus="${s.id}">⧉ Copy From Student</button>
+  </div>
+  ${subjects.map(subj=>{
+    const items = DB.syllabus.filter(x=>x.studentId===s.id && x.subject===subj);
+    const prog = subjectProgress(s.id, subj);
+    return `
+    <div class="card">
+      <div class="row"><div class="card-title" style="margin:0;">${escapeHTML(subj)}</div>${prog!==null?`<span class="page-sub" style="margin:0;">${prog}%</span>`:''}</div>
+      ${prog!==null?`<div class="progress-bar"><div style="width:${prog}%;"></div></div>`:''}
+      ${items.length===0? `<div class="page-sub" style="margin-top:8px;">No syllabus items yet.</div>` : `
+      <div style="margin-top:10px;">${items.map(it=>`
+        <div class="two-col-item">
+          <span>${escapeHTML(it.chapter)}${it.topic?' — '+escapeHTML(it.topic):''}</span>
+          <select data-syllabus-status="${it.id}" style="background:var(--card2);border:1px solid var(--line2);border-radius:8px;padding:3px 5px;font-size:11px;">
+            ${['Not Started','In Progress','Completed','Revision'].map(st=>`<option ${it.status===st?'selected':''}>${st}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      </div>`}
+    </div>`;
+  }).join('')}
+  `;
+}
+
+function bindStudentDetail(id){
+  const view = document.getElementById('view');
+  view.querySelector('#backToStudents').addEventListener('click',()=>navigate('students'));
+  view.querySelector('#editStudentBtn').addEventListener('click',()=>openStudentForm(id));
+  view.querySelectorAll('[data-tab]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id,tab:el.dataset.tab})));
+  const qr = view.querySelector('[data-quick-record]'); if(qr) qr.addEventListener('click',()=>openRecordForm(id));
+  const ar = view.querySelector('[data-add-record]'); if(ar) ar.addEventListener('click',()=>openRecordForm(id));
+  view.querySelectorAll('[data-quick-record-batch]').forEach(el=>el.addEventListener('click',()=>openBatchRecordForm(el.dataset.quickRecordBatch)));
+  view.querySelectorAll('[data-add-member]').forEach(el=>el.addEventListener('click',()=>openStudentForm(null, el.dataset.addMember)));
+  view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent})));
+  view.querySelectorAll('[data-del-record]').forEach(el=>el.addEventListener('click',()=>{
+    if(confirm('Delete this class record?')){ DB.classRecords = DB.classRecords.filter(r=>r.id!==el.dataset.delRecord); saveDB(); render(); toast('Record deleted'); }
+  }));
+  const ah = view.querySelector('[data-add-hw]'); if(ah) ah.addEventListener('click',()=>openHomeworkForm(id));
+  view.querySelectorAll('[data-hw-status]').forEach(el=>el.addEventListener('change',()=>{
+    const h = DB.homework.find(x=>x.id===el.dataset.hwStatus); h.status=el.value; saveDB(); toast('Homework updated');
+  }));
+  view.querySelectorAll('[data-mark-att]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,status]=el.dataset.markAtt.split('|');
+    upsertAttendance(sid, todayISO(), status);
+    saveDB(); render(); toast('Attendance marked: '+status);
+  }));
+  view.querySelectorAll('[data-edit-att]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,date]=el.dataset.editAtt.split('|');
+    openAttendanceEditForm(sid, date);
+  }));
+  const ae = view.querySelector('[data-add-exam]'); if(ae) ae.addEventListener('click',()=>openExamForm(id));
+  view.querySelectorAll('[data-edit-exam]').forEach(el=>el.addEventListener('click',()=>openExamForm(id, el.dataset.editExam)));
+  view.querySelectorAll('[data-mark-paid]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,month]=el.dataset.markPaid.split('|');
+    const student = studentById(sid);
+    let f = DB.fees.find(x=>x.studentId===sid && x.month===month);
+    if(!f){ f={id:uid('fee'),studentId:sid,month,monthlyFee:student.monthlyFee,paid:0,paymentDate:null,method:'Cash',notes:''}; DB.fees.push(f); }
+    f.paid = student.monthlyFee; f.paymentDate = todayISO(); f.status='Paid';
+    saveDB(); render(); toast('Marked as fully paid');
+  }));
+  const rp = view.querySelector('[data-record-payment]'); if(rp) rp.addEventListener('click',()=>openPaymentForm(id));
+  view.querySelectorAll('[data-edit-fee]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,month] = el.dataset.editFee.split('|');
+    openFeeEditForm(sid, month);
+  }));
+  const asy = view.querySelector('[data-add-syllabus]'); if(asy) asy.addEventListener('click',()=>openSyllabusForm(id));
+  view.querySelectorAll('[data-syllabus-status]').forEach(el=>el.addEventListener('change',()=>{
+    const it = DB.syllabus.find(x=>x.id===el.dataset.syllabusStatus); it.status=el.value; saveDB(); toast('Progress updated');
+  }));
+  const csyl = view.querySelector('[data-copy-syllabus]'); if(csyl) csyl.addEventListener('click',()=>openCopySyllabusForm(id));
+}
+
+/* =========================================================================
+   STUDY PLAN (weekly planner + personal tasks)
+   ========================================================================= */
+const WEEKDAYS = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
+function renderStudy(){
+  const tasks = DB.tasks.slice().sort((a,b)=> (a.completed-b.completed) || a.date.localeCompare(b.date));
+  const planByStudent = {};
+  (DB.studyPlan||[]).forEach(p=>{
+    if(!planByStudent[p.student]) planByStudent[p.student]=[];
+    planByStudent[p.student].push(p);
+  });
+  const studentNames = Object.keys(planByStudent);
+
+  return `
+  <div class="sub-heading">Weekly Study Plan</div>
+  <button class="btn primary block" id="planWeekBtn" style="margin-bottom:12px;">+ Plan a Student's Week</button>
+  ${studentNames.length===0? `<div class="empty" style="margin-bottom:20px;">No weekly plans yet. Pick a student once and fill in all 7 days together — subjects and topics are pre-filled from their last class record wherever possible.</div>` : `
+  <div class="list" style="margin-bottom:20px;">
+  ${studentNames.map(name=>{
+    // Group by day so multiple subjects on the same day sit together under
+    // one day label instead of repeating "Sat" on its own line per subject.
+    const byDay = {};
+    planByStudent[name].forEach(p=>{ if(!byDay[p.day]) byDay[p.day]=[]; byDay[p.day].push(p); });
+    const daysInOrder = WEEKDAYS.filter(d=>byDay[d]);
+    return `
+    <div class="card" style="padding:12px 14px;">
+      <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">${escapeHTML(name)}</div><button class="btn sm" data-edit-week="${escapeHTML(name)}">Edit Week</button></div>
+      ${daysInOrder.map(day=>`
+        <div style="padding:8px 0;border-bottom:1px solid var(--line);">
+          <div style="font-size:11px;font-weight:700;color:var(--amber-soft);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">${day}</div>
+          ${byDay[day].map(p=>`
+            <div class="two-col-item" style="padding:4px 0;border:none;"><span>${escapeHTML(p.subject)}: ${escapeHTML(p.topic||'—')}</span><button class="btn sm ghost" data-del-plan="${p.id}">✕</button></div>
+          `).join('')}
+        </div>
+      `).join('')}
+    </div>`;
+  }).join('')}
+  </div>`}
+
+  <div class="sub-heading">Personal Tasks</div>
+  <button class="btn primary block" id="addTaskBtn" style="margin-bottom:12px;">+ Add Task</button>
+  ${tasks.length===0? `<div class="empty">No personal tasks yet.</div>` : `
+  <div class="list">
+  ${tasks.map(t=>`
+    <div class="item">
+      <div class="dot" style="background:${t.completed?'var(--ok)':t.priority==='High'?'var(--err)':t.priority==='Medium'?'var(--amber)':'var(--ink-faint)'}"></div>
+      <div class="body"><div class="title" style="${t.completed?'text-decoration:line-through;color:var(--ink-faint);':''}">${escapeHTML(t.title)}</div><div class="meta">${t.date} · ${t.priority}</div></div>
+      <button class="btn sm" data-toggle-task="${t.id}">${t.completed?'Undo':'Done'}</button>
+    </div>
+  `).join('')}
+  </div>`}
+  `;
+}
+function bindStudy(){
+  const view = document.getElementById('view');
+  document.getElementById('planWeekBtn').addEventListener('click',()=>openWeeklyPlanForm());
+  view.querySelectorAll('[data-edit-week]').forEach(el=>el.addEventListener('click',()=>openWeeklyPlanForm(el.dataset.editWeek)));
+  document.getElementById('addTaskBtn').addEventListener('click',()=>openTaskForm());
+  view.querySelectorAll('[data-del-plan]').forEach(el=>el.addEventListener('click',()=>{
+    DB.studyPlan = (DB.studyPlan||[]).filter(p=>p.id!==el.dataset.delPlan); saveDB(); render();
+  }));
+  view.querySelectorAll('[data-toggle-task]').forEach(el=>el.addEventListener('click',()=>{
+    const t = DB.tasks.find(x=>x.id===el.dataset.toggleTask); t.completed=!t.completed; saveDB(); render();
+  }));
+}
+
+/* =========================================================================
+   EXAMS (global)
+   ========================================================================= */
+function renderExams(){
+  const exams = DB.exams.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  return `
+  <button class="btn primary block" id="addExamGlobalBtn" style="margin-bottom:12px;">+ Add / Schedule Exam</button>
+  ${exams.length===0? `<div class="empty"><div class="big">📝</div>No exams recorded yet.</div>` : `
+  <div class="list">
+  ${exams.map(e=>{
+    const st = studentById(e.studentId);
+    const isScheduled = (e.status||'Completed')==='Scheduled';
+    const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
+    return `<div class="item" data-edit-exam-global="${e.studentId}|${e.id}">
+      <div class="dot" style="background:${isScheduled?'var(--amber)':pct>=60?'var(--ok)':pct>=40?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(e.name)} — ${st?escapeHTML(st.name):'?'}</div><div class="meta">${escapeHTML(e.subject)} · ${e.date} · ${isScheduled?'Scheduled':`${e.obtained}/${e.total} (${pct}%)`}</div></div>
+      <div class="chev">›</div>
+    </div>`;
+  }).join('')}
+  </div>`}
+  `;
+}
+function bindExams(){
+  const view = document.getElementById('view');
+  document.getElementById('addExamGlobalBtn').addEventListener('click',()=>openExamForm());
+  view.querySelectorAll('[data-edit-exam-global]').forEach(el=>el.addEventListener('click',()=>{
+    const [sid,eid] = el.dataset.editExamGlobal.split('|');
+    openExamForm(sid, eid);
+  }));
+}
+
+/* =========================================================================
+   FEES (global dashboard)
+   ========================================================================= */
+let feesMonth = todayISO().slice(0,7);
+function renderFees(){
+  const students = individualStudents().filter(s=>s.monthlyFee>0);
+  let expected=0, collected=0;
+  students.forEach(s=>{ const f=feeStatusFor(s,feesMonth); expected+=f.expected; collected+=f.paid; });
+  const due = expected-collected;
+  return `
+  <div class="field" style="margin-bottom:6px;"><input type="month" id="feesMonthPicker" value="${feesMonth}"></div>
+  <div class="card">
+    <div class="grid3">
+      <div class="stat"><div class="num">${fmtMoney(expected)}</div><div class="lbl">Expected</div></div>
+      <div class="stat"><div class="num">${fmtMoney(collected)}</div><div class="lbl">Collected</div></div>
+      <div class="stat ${due>0?'hot':''}"><div class="num">${fmtMoney(due)}</div><div class="lbl">Due</div></div>
+    </div>
+  </div>
+  ${students.length===0? `<div class="empty">No students with a monthly fee set.</div>` : `
+  <div class="list">
+  ${students.map(s=>{
+    const f = feeStatusFor(s,feesMonth);
+    return `<div class="item" data-open-student="${s.id}">
+      <div class="dot" style="background:${f.status==='Paid'||f.status==='Advance'?'var(--ok)':f.status==='Partial'?'var(--amber)':'var(--err)'}"></div>
+      <div class="body"><div class="title">${escapeHTML(s.name)}</div><div class="meta">Paid ${fmtMoney(f.paid)} / ${fmtMoney(f.expected)}</div></div>
+      <span class="badge ${feeBadgeClass(f.status)}">${f.status}</span>
+    </div>`;
+  }).join('')}
+  </div>`}
+  `;
+}
+function bindFees(){
+  const view = document.getElementById('view');
+  view.querySelector('#feesMonthPicker').addEventListener('change', e=>{ feesMonth=e.target.value||feesMonth; render(); });
+  view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent,tab:'fees'})));
+}
+
+/* =========================================================================
+   REPORTS
+   ========================================================================= */
+function renderReports(){
+  const month = todayISO().slice(0,7);
+  const classesTaken = DB.classRecords.filter(r=>r.date.startsWith(month)).length;
+  const examsThisMonth = DB.exams.filter(e=>e.date.startsWith(month)).length;
+
+  // Split by source: a student who's a member of a group (batchId set) counts
+  // as "batch/group" income even though they're tracked individually — a
+  // standalone private student (no batchId) counts as "private" income.
+  let privateCollected=0, privateDue=0, batchCollected=0, batchDue=0;
+  activeStudents().filter(s=>s.monthlyFee>0 && !s.isGroup).forEach(s=>{
+    const f=feeStatusFor(s,month);
+    if(s.batchId){ batchCollected+=f.paid; batchDue+=f.due; }
+    else{ privateCollected+=f.paid; privateDue+=f.due; }
+  });
+  const collected = privateCollected + batchCollected;
+  const dueTotal = privateDue + batchDue;
+
+  const rate = perDayRate(month); // salary ÷ total calendar days — Friday off is still paid
+  const elapsed = daysElapsedInMonth(month);
+  const accruedSoFar = rate!==null ? rate*elapsed : null;
+  const privatePerDaySoFar = elapsed>0 ? privateCollected/elapsed : null;
+  const batchPerDaySoFar = elapsed>0 ? batchCollected/elapsed : null;
+  const personalOffsThisMonth = (DB.offDays||[]).filter(o=>o.date.startsWith(month)).sort((a,b)=>a.date.localeCompare(b.date));
+  const weeklyOffs = weeklyOffCountInMonth(month);
+
+  return `
+  <div class="card">
+    <div class="card-title">Monthly Teaching Report — ${monthLabel(month)}</div>
+    <div class="two-col-item"><span>Classes recorded</span><b>${classesTaken}</b></div>
+    <div class="two-col-item"><span>Active students</span><b>${individualStudents().length}</b></div>
+    <div class="two-col-item"><span>Exams held</span><b>${examsThisMonth}</b></div>
+  </div>
+
+  ${(DB.settings.monthlySalary>0 || collected>0) ? `
+  <div class="card">
+    <div class="card-title">Income Reference — ${monthLabel(month)}</div>
+    <div class="hint" style="margin-bottom:12px;">Three separate income sources, shown separately since they work differently. Reference only — nothing here is ever deducted automatically.</div>
+
+    ${DB.settings.monthlySalary>0 ? `
+    <div class="sub-heading" style="margin-top:0;">Madrasa Salary (fixed monthly)</div>
+    <div class="two-col-item"><span>Monthly salary</span><b>${fmtMoney(DB.settings.monthlySalary)}</b></div>
+    ${rate!==null? `<div class="two-col-item"><span>Per-day rate (salary ÷ ${daysInMonth(month)} days)</span><b>${fmtMoney(rate)}</b></div>` : ''}
+    ${accruedSoFar!==null? `<div class="two-col-item"><span>Accrued so far (${elapsed} days elapsed)</span><b>${fmtMoney(accruedSoFar)}</b></div>` : ''}
+    <div class="page-sub" style="margin-top:4px;">Weekly off (${DB.settings.weeklyOffDay||'—'}) is paid as normal — ${weeklyOffs} day${weeklyOffs===1?'':'s'} this month, not subtracted from the rate.</div>
+    ` : `
+    <div class="sub-heading" style="margin-top:0;">Madrasa Salary</div>
+    <div class="page-sub">Set your monthly salary in Settings to see this.</div>
+    `}
+
+    <div class="divider"></div>
+
+    <div class="sub-heading">Private Tutoring Income</div>
+    <div class="two-col-item"><span>Collected this month</span><b>${fmtMoney(privateCollected)}</b></div>
+    <div class="two-col-item"><span>Still due this month</span><b>${fmtMoney(privateDue)}</b></div>
+    ${privatePerDaySoFar!==null? `<div class="two-col-item"><span>Average per day so far</span><b>${fmtMoney(privatePerDaySoFar)}</b></div>` : ''}
+
+    <div class="divider"></div>
+
+    <div class="sub-heading">Batch / Group Income</div>
+    <div class="two-col-item"><span>Collected this month</span><b>${fmtMoney(batchCollected)}</b></div>
+    <div class="two-col-item"><span>Still due this month</span><b>${fmtMoney(batchDue)}</b></div>
+    ${batchPerDaySoFar!==null? `<div class="two-col-item"><span>Average per day so far</span><b>${fmtMoney(batchPerDaySoFar)}</b></div>` : ''}
+
+    ${personalOffsThisMonth.length? `
+      <div class="divider"></div>
+      <div style="font-size:12px;color:var(--ink-faint);font-weight:700;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Personal off days this month (${personalOffsThisMonth.length})</div>
+      ${personalOffsThisMonth.map(o=>`
+        <div class="two-col-item">
+          <span>${o.date}${o.reason?' · '+escapeHTML(o.reason):''}</span>
+          <span class="badge ${o.makeupNeeded?(o.makeupDone?'ok':'warn'):'muted'}">${o.makeupNeeded?(o.makeupDone?'Made up':'Makeup owed'):'No makeup needed'}</span>
+        </div>
+      `).join('')}
+      ${rate!==null? `<div class="page-sub" style="margin-top:8px;">If any of these became unpaid leave, roughly ${fmtMoney(rate*personalOffsThisMonth.length)} at the reference rate — hypothetical only, not an actual deduction.</div>` : ''}
+    ` : ''}
+  </div>
+  ` : `
+  <div class="card">
+    <div class="card-title">Income Reference</div>
+    <div class="page-sub">Set your monthly salary in Settings to see a per-day rate here.</div>
+  </div>
+  `}
+
+  ${(DB.sessionLogs&&DB.sessionLogs.length) ? `
+  <div class="card">
+    <div class="card-title">Session Log — actual time taught</div>
+    <div class="hint" style="margin-bottom:10px;">Logged whenever you tapped "Starting early" or "Ended early" on Today's timeline. Scheduled time is untouched — this is just a record of what actually happened.</div>
+    ${(()=>{
+      const logs = DB.sessionLogs;
+      const scheduledMins = logs.map(l=>toMinutes(parseHHMM(l.scheduledEnd))-toMinutes(parseHHMM(l.scheduledStart)));
+      const actualMins = logs.map(sessionActualMinutes);
+      const savedMins = logs.map((l,i)=> scheduledMins[i]-actualMins[i]);
+      const avgActual = actualMins.reduce((a,b)=>a+b,0)/logs.length;
+      const avgSaved = savedMins.reduce((a,b)=>a+b,0)/logs.length;
+      return `
+      <div class="grid3" style="margin-bottom:12px;">
+        <div class="stat"><div class="num">${logs.length}</div><div class="lbl">Sessions logged</div></div>
+        <div class="stat"><div class="num">${formatDuration(avgActual)}</div><div class="lbl">Avg. time taught</div></div>
+        <div class="stat"><div class="num">${formatDuration(Math.max(0,avgSaved))}</div><div class="lbl">Avg. deviation from schedule</div></div>
+      </div>`;
+    })()}
+    <div class="sub-heading" style="margin-top:14px;">By Student</div>
+    ${(()=>{
+      const byStudent = {};
+      DB.sessionLogs.forEach(l=>{
+        const key = l.studentId || '__unlinked__';
+        if(!byStudent[key]) byStudent[key] = [];
+        byStudent[key].push(l);
+      });
+      return Object.entries(byStudent).map(([sid, logs])=>{
+        const st = sid!=='__unlinked__' ? studentById(sid) : null;
+        const mins = logs.map(sessionActualMinutes);
+        const total = mins.reduce((a,b)=>a+b,0);
+        const avg = total/logs.length;
+        return `<div class="two-col-item">
+          <span>${st?escapeHTML(st.name):'(unlinked block)'} · ${logs.length} session${logs.length===1?'':'s'}</span>
+          <span class="page-sub" style="margin:0;">${formatDuration(total)} total · avg ${formatDuration(avg)}</span>
+        </div>`;
+      }).join('');
+    })()}
+
+    <div class="sub-heading">Full Log (${DB.sessionLogs.length})</div>
+    <div class="list">
+    ${DB.sessionLogs.slice().sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt)).map(l=>{
+      const scheduledMin = toMinutes(parseHHMM(l.scheduledEnd)) - toMinutes(parseHHMM(l.scheduledStart));
+      const actualMin = sessionActualMinutes(l);
+      const savedMin = scheduledMin - actualMin;
+      const tag = [l.actualStart?'started early':null, l.actualEnd?'ended early':null].filter(Boolean).join(', ');
+      return `<div class="two-col-item">
+        <span>${l.date} · ${escapeHTML(l.title)}${tag?` (${tag})`:''}</span>
+        <span class="page-sub" style="margin:0;">${formatDuration(actualMin)} taught${savedMin>0?` (${formatDuration(savedMin)} saved)`:''}</span>
+      </div>`;
+    }).join('')}
+    </div>
+  </div>
+  ` : ''}
+
+  <div class="sub-heading">Student Reports</div>
+  <div class="list">
+  ${DB.students.map(s=>{
+    const att = attendanceStatsFor(s.id);
+    const avg = examAverage(s.id);
+    return `<div class="item" data-open-student="${s.id}">
+      <div class="dot" style="background:${typeColor(s.type)}"></div>
+      <div class="body"><div class="title">${escapeHTML(s.name)}</div><div class="meta">Attendance ${att.pct!==null?att.pct+'%':'—'} · Exam avg ${avg!==null?avg+'%':'—'}</div></div>
+      <div class="chev">›</div>
+    </div>`;
+  }).join('')}
+  </div>
+  `;
+}
+function bindReports(){
+  document.getElementById('view').querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent})));
+}
+
+/* =========================================================================
+   SETTINGS
+   ========================================================================= */
+function renderSettings(){
+  const st = DB.settings;
+  return `
+  <div class="card">
+    <div class="card-title">Profile</div>
+    <div class="field"><label>Teacher name</label><input id="setName" value="${escapeHTML(st.teacherName)}"></div>
+    <div class="field"><label>Brand name</label><input id="setBrand" value="${escapeHTML(st.brand)}"></div>
+    <div class="field"><label>Location</label><input id="setLocation" value="${escapeHTML(st.location)}"></div>
+    <div class="grid2">
+      <div class="field"><label>City (for prayer API)</label><input id="setCity" value="${escapeHTML(st.city)}"></div>
+      <div class="field"><label>Country</label><input id="setCountry" value="${escapeHTML(st.country)}"></div>
+    </div>
+    <button class="btn primary block" id="saveSettingsBtn">Save Profile</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Subjects</div>
+    <div class="chip-select">${DB.subjects.map(sub=>`<span class="chip">${escapeHTML(sub)} <a href="#" data-del-subject="${escapeHTML(sub)}" style="opacity:.6;margin-left:4px;">✕</a></span>`).join('')}</div>
+    <div class="field" style="margin-top:12px;"><label>Add subject</label><div class="row"><input id="newSubjectInput" placeholder="e.g. Arabic" style="flex:1;"><button class="btn sm" id="addSubjectBtn">Add</button></div></div>
+  </div>
+
+  ${(()=>{
+    const groups = DB.students.filter(s=>s.isGroup===true);
+    if(groups.length===0) return '';
+    return `
+    <div class="card" style="border-color:rgba(224,164,88,0.4);">
+      <div class="card-title">Marked as "Group" on this device (${groups.length})</div>
+      <div class="hint" style="margin-bottom:10px;">If any of these are actually a real individual student — not a batch/class container — un-mark them here. That's the most common cause of a student going missing from counts and the Fees list.</div>
+      <div class="list">
+        ${groups.map(g=>`
+          <div class="item">
+            <div class="dot" style="background:${typeColor(g.type)}"></div>
+            <div class="body"><div class="title">${escapeHTML(g.name)}</div><div class="meta">${typeLabel(g.type)} · ${batchMembers(g.id).length} member${batchMembers(g.id).length===1?'':'s'}</div></div>
+            <button class="btn sm" data-unmark-group="${g.id}">Not a group</button>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+  })()}
+
+  <div class="card">
+    <div class="card-title">Off Days &amp; Salary Reference</div>
+    <div class="field"><label>Weekly off day</label>
+      <select id="setWeeklyOff">
+        <option value="">— none —</option>
+        ${['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'].map(d=>`<option value="${d}" ${st.weeklyOffDay===d?'selected':''}>${d}</option>`).join('')}
+      </select>
+      <div class="hint">Recurring, no salary impact, no makeup tracking — just marks that day as normally off.</div>
+    </div>
+    <div class="field"><label>Monthly salary (৳, madrasa) — for reference only</label><input id="setMonthlySalary" type="number" value="${st.monthlySalary||''}"></div>
+    <div class="hint" style="margin-bottom:12px;">Used only to show a per-day rate on the Reports page. Off days you take personally never change this automatically.</div>
+    <button class="btn primary block" id="saveOffDaySettingsBtn">Save</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Backup to Google Drive</div>
+    <div class="page-sub" style="margin-bottom:12px;">
+      ${st.lastManualBackupAt
+        ? `Last backup: ${new Date(st.lastManualBackupAt).toLocaleString()}${daysSinceLastBackup()>=BACKUP_REMINDER_DAYS?` — <span style="color:var(--amber-soft);">it's been ${daysSinceLastBackup()} days, worth doing again</span>`:''}`
+        : `No backup taken yet — do this now, then again whenever you add a lot of new records.`}
+    </div>
+    <button class="btn primary block" id="shareBackupBtn" style="margin-bottom:8px;">Save Backup to Drive</button>
+    <div class="hint">Opens your phone's Share menu — pick "Drive" (or "Save to Drive"). No sign-in or setup needed, it uses the Drive app you're already logged into.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Backup to Google Sheets</div>
+    <div class="page-sub" style="margin-bottom:12px;">
+      ${st.lastSheetsBackupAt ? `Last synced: ${new Date(st.lastSheetsBackupAt).toLocaleString()}` : 'Not connected yet.'}
+    </div>
+    <div class="field"><label>Apps Script Web App URL</label><input id="setSheetsUrl" value="${escapeHTML(st.sheetsWebAppUrl||'')}" placeholder="https://script.google.com/macros/s/…/exec"></div>
+    <div class="field"><label><input type="checkbox" id="setSheetsAuto" ${st.sheetsAutoBackup?'checked':''} style="width:auto;margin-right:6px;">Auto-backup after every change</label></div>
+    <button class="btn primary block" id="saveSheetsSettingsBtn" style="margin-bottom:10px;">Save</button>
+    <div class="grid2">
+      <button class="btn block" id="sheetsBackupNowBtn">Backup Now</button>
+      <button class="btn block" id="sheetsRestoreBtn">Restore From Sheet</button>
+    </div>
+    <div class="hint" style="margin-top:10px;">One-time setup: create a Google Sheet, Extensions → Apps Script, paste the provided Code.gs, Deploy → Web App → Anyone with the link → copy the URL here. Only pushes automatically — restoring back always needs an explicit tap on "Restore From Sheet" plus a confirm, so nothing overwrites your data by accident.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Data</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn block" id="exportBtn">Export Backup (JSON)</button>
+      <label class="btn block" style="text-align:center;" id="importLabel">Import Backup
+        <input type="file" id="importFile" accept="application/json" style="display:none;">
+      </label>
+      ${DB.students.length===0? `<button class="btn block" id="loadDemoBtn2">Load Demo Data</button>`:''}
+      <button class="btn danger block" id="resetBtn">Reset All Data</button>
+    </div>
+  </div>
+  <div class="page-sub" style="text-align:center;">Teacher Planner · Build ${APP_BUILD} · Data stored locally on this device</div>
+  `;
+}
+function bindSettings(){
+  const view = document.getElementById('view');
+  const shareBtn = document.getElementById('shareBackupBtn');
+  if(shareBtn) shareBtn.addEventListener('click', shareBackupToDrive);
+  document.getElementById('saveSettingsBtn').addEventListener('click',()=>{
+    DB.settings.teacherName = view.querySelector('#setName').value.trim() || DB.settings.teacherName;
+    DB.settings.brand = view.querySelector('#setBrand').value.trim() || DB.settings.brand;
+    DB.settings.location = view.querySelector('#setLocation').value.trim() || DB.settings.location;
+    DB.settings.city = view.querySelector('#setCity').value.trim() || DB.settings.city;
+    DB.settings.country = view.querySelector('#setCountry').value.trim() || DB.settings.country;
+    saveDB(); document.getElementById('brandEyebrow').textContent = DB.settings.brand;
+    toast('Profile saved');
+  });
+  view.querySelectorAll('[data-del-subject]').forEach(el=>el.addEventListener('click',(ev)=>{
+    ev.preventDefault();
+    DB.subjects = DB.subjects.filter(s=>s!==el.dataset.delSubject); saveDB(); render();
+  }));
+  document.getElementById('saveOffDaySettingsBtn').addEventListener('click',()=>{
+    DB.settings.weeklyOffDay = view.querySelector('#setWeeklyOff').value || null;
+    DB.settings.monthlySalary = Number(view.querySelector('#setMonthlySalary').value)||0;
+    saveDB(); render(); toast('Saved');
+  });
+  document.getElementById('addSubjectBtn').addEventListener('click',()=>{
+    const v = view.querySelector('#newSubjectInput').value.trim();
+    if(v && !DB.subjects.includes(v)){ DB.subjects.push(v); saveDB(); render(); }
+  });
+  view.querySelectorAll('[data-unmark-group]').forEach(el=>el.addEventListener('click',()=>{
+    const g = studentById(el.dataset.unmarkGroup);
+    if(g){ g.isGroup = false; saveDB(); render(); toast(`${g.name} is now a regular student — check Fees/Attendance for them.`); }
+  }));
+  document.getElementById('exportBtn').addEventListener('click', exportBackup);
+  document.getElementById('importFile').addEventListener('change', importBackup);
+  const demoBtn2 = document.getElementById('loadDemoBtn2');
+  if(demoBtn2) demoBtn2.addEventListener('click',()=>{ loadDemoData(); render(); toast('Demo data loaded'); });
+  document.getElementById('resetBtn').addEventListener('click',()=>{
+    if(confirm('This will permanently delete ALL data on this device. Continue?')){
+      if(confirm('Are you absolutely sure? This cannot be undone.')){
+        localStorage.removeItem(DB_KEY); DB = defaultDB(); saveDB(); navigate('dashboard'); toast('All data reset');
+      }
+    }
+  });
+  const sheetsSaveBtn = document.getElementById('saveSheetsSettingsBtn');
+  if(sheetsSaveBtn) sheetsSaveBtn.addEventListener('click', ()=>{
+    DB.settings.sheetsWebAppUrl = view.querySelector('#setSheetsUrl').value.trim();
+    DB.settings.sheetsAutoBackup = view.querySelector('#setSheetsAuto').checked;
+    saveDB(); render(); toast('Saved');
+  });
+  const sheetsBackupNowBtn = document.getElementById('sheetsBackupNowBtn');
+  if(sheetsBackupNowBtn) sheetsBackupNowBtn.addEventListener('click', ()=>pushToSheets(false));
+  const sheetsRestoreBtn = document.getElementById('sheetsRestoreBtn');
+  if(sheetsRestoreBtn) sheetsRestoreBtn.addEventListener('click', restoreFromSheets);
+}
+function exportBackup(){
+  downloadBackupFile();
+  toast('Backup exported');
+}
+function importBackup(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const parsed = JSON.parse(reader.result);
+      if(!parsed || typeof parsed!=='object' || !Array.isArray(parsed.students)){
+        throw new Error('Not a valid backup file');
+      }
+      if(!confirm('This will replace all current data with the backup. Continue?')) return;
+      DB = mergeIntoDefaults(parsed); // same merge path as normal load — new fields fall back to defaults, nothing dropped
+      saveDB();
+      navigate('dashboard');
+      toast('Backup restored');
+    }catch(err){
+      alert('Import failed: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = ''; // allow re-selecting the same file next time
+}
+
+/* =========================================================================
+   MODAL SYSTEM
+   ========================================================================= */
+function openModal(innerHTML, opts){
+  opts = opts||{};
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="modal-backdrop" id="modalBackdrop">
+      <div class="modal-sheet ${opts.center?'center':''}" id="modalSheet">${innerHTML}</div>
+    </div>`;
+  document.getElementById('modalBackdrop').addEventListener('click', e=>{ if(e.target.id==='modalBackdrop') closeModal(); });
+  const closeBtn = root.querySelector('.modal-close');
+  if(closeBtn) closeBtn.addEventListener('click', closeModal);
+  if(opts.onMount) opts.onMount(root);
+}
+function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
+
+function modalHead(title){
+  return `<div class="modal-head"><h2>${title}</h2><button class="modal-close">✕</button></div>`;
+}
+
+/* ---------- Pending homework — quick list reachable from Dashboard stat ---------- */
+function openPendingHomeworkModal(){
+  const items = DB.homework.filter(h=>h.status==='Pending'||h.status==='Late').sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+  openModal(`
+    ${modalHead('Pending Homework')}
+    ${items.length===0? `<div class="empty">Nothing pending — you're caught up.</div>` : `
+    <div class="list">
+      ${items.map(h=>{
+        const st = studentById(h.studentId);
+        return `<div class="item" style="cursor:pointer;" data-go-hw="${h.studentId}">
+          <div class="dot" style="background:${h.status==='Late'?'var(--err)':'var(--amber)'}"></div>
+          <div class="body"><div class="title">${st?escapeHTML(st.name):'?'} · ${escapeHTML(h.subject)}</div><div class="meta">${escapeHTML(h.homework)} — due ${h.dueDate}</div></div>
+          <div class="chev">›</div>
+        </div>`;
+      }).join('')}
+    </div>`}
+  `,{onMount:(root)=>{
+    root.querySelectorAll('[data-go-hw]').forEach(el=>el.addEventListener('click',()=>{
+      closeModal();
+      navigate('studentDetail',{id:el.dataset.goHw, tab:'homework'});
+    }));
+  }});
+}
+
+/* ---------- Student form ---------- */
+function openStudentForm(id, presetBatchId){
+  const s = id ? studentById(id) : null;
+  const presetBatch = presetBatchId ? studentById(presetBatchId) : null;
+  const subjectsChecked = s ? (s.subjects||[]) : (presetBatch ? (presetBatch.subjects||[]) : []);
+  openModal(`
+    ${modalHead(s?'Edit Student':'Add Student / Batch')}
+    <div class="field"><label>Name</label><input id="f_name" value="${s?escapeHTML(s.name):''}" placeholder="e.g. Safa or 4 o'clock Batch"></div>
+    <div class="grid2">
+      <div class="field"><label>Type</label>
+        <select id="f_type">
+          ${[['madrasa','Madrasa student'],['batch','Batch'],['private','Private student']].map(([v,l])=>`<option value="${v}" ${(s?s.type===v:(presetBatchId?v==='private':v==='private'))?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Class</label><input id="f_class" value="${s?escapeHTML(s.class||''):''}"></div>
+    </div>
+    <div class="field"><label>School / Madrasa</label><input id="f_school" value="${s?escapeHTML(s.school||''):''}"></div>
+    ${(()=>{
+      const isThisAGroup = s ? s.isGroup===true : false;
+      if(isThisAGroup) return ''; // a group can't itself be a member of another group
+      return `
+      <div class="field"><label><input type="checkbox" id="f_isGroup" ${isThisAGroup?'checked':''} style="width:auto;margin-right:6px;">This is a group (batch, madrasa class, etc.) — not one individual student</label>
+        <div class="hint">Use this for any group you teach together — a private tutoring batch, or one class within the madrasa. It becomes a container: you can add real students under it, each with their own fee/attendance, without the group itself counting toward your student headcount.</div>
+      </div>`;
+    })()}
+    ${(()=>{
+      const groups = DB.students.filter(x=>x.isGroup===true && (!s||x.id!==s.id));
+      if(groups.length===0 || (s&&s.isGroup===true)) return '';
+      return `
+      <div class="field"><label>Part of a group? (optional)</label>
+        <select id="f_batchId">
+          <option value="">— not part of a group —</option>
+          ${groups.map(b=>`<option value="${b.id}" ${(s&&s.batchId===b.id)||(!s&&presetBatchId===b.id)?'selected':''}>${escapeHTML(b.name)}</option>`).join('')}
+        </select>
+        <div class="hint">Class records taught to the whole group will show up automatically for this student too — their own fee, attendance, and progress still stay separate.</div>
+      </div>`;
+    })()}
+    ${DB.students.length? `
+    <div class="field"><label>Copy subjects from another student (optional)</label>
+      <select id="f_copyFrom">
+        <option value="">— don't copy —</option>
+        ${DB.students.filter(x=>!s||x.id!==s.id).map(x=>`<option value="${x.id}">${escapeHTML(x.name)} (${x.subjects&&x.subjects.length?x.subjects.length+' subjects':'no subjects'})</option>`).join('')}
+      </select>
+      <div class="hint">Handy when several students share the same subjects — e.g. two Class 9 private students.</div>
+    </div>` : ''}
+    <div class="field"><label>Subjects</label>
+      <div class="chip-select" id="f_subjects">
+        ${DB.subjects.map(sub=>`<span class="chip ${subjectsChecked.includes(sub)?'on':''}" data-chip="${escapeHTML(sub)}">${escapeHTML(sub)}</span>`).join('')}
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Guardian name</label><input id="f_gname" value="${s?escapeHTML(s.guardianName||''):''}"></div>
+      <div class="field"><label>Guardian phone</label><input id="f_gphone" value="${s?escapeHTML(s.guardianPhone||''):''}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Area</label><input id="f_area" value="${s?escapeHTML(s.area||''):''}"></div>
+      <div class="field"><label>Monthly fee (৳)</label><input id="f_fee" type="number" value="${s?s.monthlyFee||'':''}"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="f_notes">${s?escapeHTML(s.notes||''):''}</textarea></div>
+    ${s? `<div class="field"><label><input type="checkbox" id="f_active" ${s.active!==false?'checked':''} style="width:auto;margin-right:6px;">Active</label></div>`:''}
+    <div class="modal-actions">
+      ${s?`<button class="btn danger" id="delStudentBtn">Delete</button>`:''}
+      <button class="btn primary" id="saveStudentBtn">Save</button>
+    </div>
+  `, {onMount:(root)=>{
+    root.querySelectorAll('[data-chip]').forEach(chip=>chip.addEventListener('click',()=>chip.classList.toggle('on')));
+    const copyFrom = root.querySelector('#f_copyFrom');
+    if(copyFrom) copyFrom.addEventListener('change', ()=>{
+      const src = studentById(copyFrom.value);
+      if(!src) return;
+      root.querySelectorAll('[data-chip]').forEach(chip=>{
+        chip.classList.toggle('on', (src.subjects||[]).includes(chip.dataset.chip));
+      });
+      toast(`Copied ${src.name}'s subjects — review before saving`);
+    });
+    // Mutual exclusivity: an entity can't simultaneously BE a group container
+    // AND be a MEMBER of another group. Live-toggle so this can't be set up
+    // by accident, which is what caused the "member's data disappeared" bug.
+    const isGroupCheckbox = root.querySelector('#f_isGroup');
+    const batchIdSelect = root.querySelector('#f_batchId');
+    if(isGroupCheckbox && batchIdSelect){
+      isGroupCheckbox.addEventListener('change', ()=>{
+        if(isGroupCheckbox.checked){ batchIdSelect.value=''; batchIdSelect.disabled=true; }
+        else{ batchIdSelect.disabled=false; }
+      });
+      batchIdSelect.addEventListener('change', ()=>{
+        if(batchIdSelect.value){ isGroupCheckbox.checked=false; isGroupCheckbox.disabled=true; }
+        else{ isGroupCheckbox.disabled=false; }
+      });
+      if(isGroupCheckbox.checked) batchIdSelect.disabled=true;
+      if(batchIdSelect.value) isGroupCheckbox.disabled=true;
+    }
+    root.querySelector('#saveStudentBtn').addEventListener('click',()=>{
+      const name = root.querySelector('#f_name').value.trim();
+      if(!name){ alert('Name is required'); return; }
+      const subjects = Array.from(root.querySelectorAll('[data-chip].on')).map(c=>c.dataset.chip);
+      const batchField = root.querySelector('#f_batchId');
+      const isGroupField = root.querySelector('#f_isGroup');
+      let isGroupVal = isGroupField ? isGroupField.checked : (s?s.isGroup===true:false);
+      let batchIdVal = batchField ? (batchField.value || null) : (s?s.batchId:null);
+      if(isGroupVal) batchIdVal = null; // defensive: never both at once, regardless of UI state
+      const data = {
+        name, type: root.querySelector('#f_type').value, class: root.querySelector('#f_class').value.trim(),
+        school: root.querySelector('#f_school').value.trim(), subjects,
+        isGroup: isGroupVal,
+        batchId: batchIdVal,
+        guardianName: root.querySelector('#f_gname').value.trim(), guardianPhone: root.querySelector('#f_gphone').value.trim(),
+        area: root.querySelector('#f_area').value.trim(), monthlyFee: Number(root.querySelector('#f_fee').value)||0,
+        notes: root.querySelector('#f_notes').value.trim()
+      };
+      if(s){
+        Object.assign(s, data);
+        s.active = root.querySelector('#f_active') ? root.querySelector('#f_active').checked : true;
+      }else{
+        DB.students.push(Object.assign({id:uid('stu'), joiningDate:todayISO(), active:true, createdAt:new Date().toISOString()}, data));
+      }
+      saveDB(); closeModal(); render(); toast('Saved');
+    });
+    const del = root.querySelector('#delStudentBtn');
+    if(del) del.addEventListener('click',()=>{
+      if(confirm(`Delete ${s.name}? This does not delete their class records, but they will be orphaned.`)){
+        DB.students = DB.students.filter(x=>x.id!==s.id); saveDB(); closeModal(); navigate('students'); toast('Student deleted');
+      }
+    });
+  }});
+}
+
+/* ---------- Class record form (quick, per product philosophy) ---------- */
+function openRecordForm(studentId){
+  const s = studentById(studentId);
+  const subjects = s.subjects&&s.subjects.length? s.subjects : DB.subjects;
+  openModal(`
+    ${modalHead('Record: '+escapeHTML(s.name))}
+    <div class="field"><label>Subject</label><select id="r_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Date</label><input type="date" id="r_date" value="${todayISO()}"></div>
+    <div class="grid3">
+      <div class="field"><label>Chapter</label><input id="r_chapter" placeholder="Ch. 5"></div>
+      <div class="field"><label>Topic</label><input id="r_topic" placeholder="Exercise 5.2"></div>
+      <div class="field"><label>Page/Q#</label><input id="r_page" placeholder="Q1–8"></div>
+    </div>
+    <div class="field"><label>What was completed</label><textarea id="r_completed" placeholder="Short note on what you covered"></textarea></div>
+    <div class="grid2">
+      <div class="field"><label>Homework</label><input id="r_hw" placeholder="Q9–12"></div>
+      <div class="field"><label>Homework due</label><input type="date" id="r_hwdue"></div>
+    </div>
+    <div class="field"><label>Next class topic</label><input id="r_next" placeholder="Q13–20"></div>
+    <div class="grid2">
+      <div class="field"><label>Understanding</label><select id="r_understanding">${['Excellent','Good','Average','Weak'].map(u=>`<option>${u}</option>`).join('')}</select></div>
+      <div class="field"><label>Attendance</label><select id="r_att">${['Present','Absent','Late','Cancelled'].map(u=>`<option>${u}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Weakness (optional)</label><input id="r_weak"></div>
+    <div class="field"><label>Teacher note (optional)</label><textarea id="r_note"></textarea></div>
+    <div class="modal-actions"><button class="btn primary block" id="saveRecordBtn">Save Record</button></div>
+  `, {onMount:(root)=>{
+    root.querySelector('#saveRecordBtn').addEventListener('click',()=>{
+      const subject = root.querySelector('#r_subject').value;
+      const rec = {
+        id: uid('rec'), studentId, subject, date: root.querySelector('#r_date').value||todayISO(),
+        chapter: root.querySelector('#r_chapter').value.trim(), topic: root.querySelector('#r_topic').value.trim(),
+        page: root.querySelector('#r_page').value.trim(), completed: root.querySelector('#r_completed').value.trim(),
+        homework: root.querySelector('#r_hw').value.trim(), homeworkDeadline: root.querySelector('#r_hwdue').value||'',
+        understanding: root.querySelector('#r_understanding').value, weakness: root.querySelector('#r_weak').value.trim(),
+        nextTopic: root.querySelector('#r_next').value.trim(), note: root.querySelector('#r_note').value.trim(),
+        createdAt: new Date().toISOString()
+      };
+      DB.classRecords.push(rec);
+      // auto attendance
+      upsertAttendance(studentId, rec.date, root.querySelector('#r_att').value);
+      // auto homework entry if homework text given
+      if(rec.homework){
+        DB.homework.push({id:uid('hw'), studentId, subject, homework:rec.homework, givenDate:rec.date, dueDate:rec.homeworkDeadline||rec.date, status:'Pending', classRecordId:rec.id});
+      }
+      saveDB(); closeModal(); navigate('studentDetail',{id:studentId,tab:'overview'}); toast('Class record saved');
+    });
+  }});
+}
+
+/* ---------- Batch quick-record: ONE shared record for what was taught, plus
+   one-tap attendance per member, plus an optional personal-override note per
+   member for when someone needs a different homework/next-topic. ---------- */
+function openBatchRecordForm(batchId){
+  const batch = studentById(batchId);
+  const members = batchMembers(batchId);
+  const subjects = batch.subjects&&batch.subjects.length? batch.subjects : DB.subjects;
+  openModal(`
+    ${modalHead('Record: '+escapeHTML(batch.name))}
+    <div class="field"><label>Subject</label><select id="br_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Date</label><input type="date" id="br_date" value="${todayISO()}"></div>
+    <div class="grid3">
+      <div class="field"><label>Chapter</label><input id="br_chapter" placeholder="Ch. 5"></div>
+      <div class="field"><label>Topic</label><input id="br_topic" placeholder="Exercise 5.2"></div>
+      <div class="field"><label>Page/Q#</label><input id="br_page" placeholder="Q1–8"></div>
+    </div>
+    <div class="field"><label>What was completed</label><textarea id="br_completed" placeholder="Short note on what you covered"></textarea></div>
+    <div class="grid2">
+      <div class="field"><label>Homework (whole group)</label><input id="br_hw" placeholder="Q9–12"></div>
+      <div class="field"><label>Homework due</label><input type="date" id="br_hwdue"></div>
+    </div>
+    <div class="field"><label>Next class topic (whole group)</label><input id="br_next" placeholder="Q13–20"></div>
+    <div class="field"><label>Teacher note (optional)</label><textarea id="br_note"></textarea></div>
+
+    ${members.length? `
+    <div class="sub-heading">Attendance</div>
+    <div class="list" id="br_attList">
+      ${members.map(m=>`
+        <div class="item" data-member-att="${m.id}">
+          <div class="body"><div class="title">${escapeHTML(m.name)}</div></div>
+          <div style="display:flex;gap:6px;">
+            ${['Present','Absent','Late','Cancelled'].map(st=>`<button type="button" class="btn sm ${st==='Present'?'primary':''}" data-att-choice="${m.id}|${st}">${st[0]}</button>`).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="hint" style="margin:-4px 0 14px;">Defaults to Present for everyone — tap to change just the ones who weren't.</div>
+
+    <div class="sub-heading">Personal Override (optional)</div>
+    <div class="hint" style="margin-top:-4px;">Only fill this in for a student who needs different homework or a different next topic than the rest of the group.</div>
+    <div id="br_overrideList">
+      ${members.map(m=>`
+        <div class="field" style="margin-top:10px;">
+          <label>${escapeHTML(m.name)} — different homework/next topic?</label>
+          <input data-override-hw="${m.id}" placeholder="Leave blank to use the group's homework">
+        </div>
+      `).join('')}
+    </div>
+    ` : `<div class="hint">No members added to this batch yet — add members from the batch's Overview tab so you can track attendance and progress per student.</div>`}
+
+    <div class="modal-actions"><button class="btn primary block" id="br_saveBtn">Save Class Record</button></div>
+  `,{onMount:(root)=>{
+    // attendance choice buttons — one active per member, default Present
+    const attState = {};
+    members.forEach(m=>attState[m.id]='Present');
+    root.querySelectorAll('[data-att-choice]').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const [mid, status] = btn.dataset.attChoice.split('|');
+        attState[mid] = status;
+        root.querySelectorAll(`[data-att-choice^="${mid}|"]`).forEach(b=>b.classList.remove('primary'));
+        btn.classList.add('primary');
+      });
+    });
+
+    root.querySelector('#br_saveBtn').addEventListener('click',()=>{
+      const subject = root.querySelector('#br_subject').value;
+      const date = root.querySelector('#br_date').value || todayISO();
+      const homework = root.querySelector('#br_hw').value.trim();
+      const homeworkDeadline = root.querySelector('#br_hwdue').value||'';
+      const nextTopic = root.querySelector('#br_next').value.trim();
+
+      const rec = {
+        id: uid('rec'), studentId: batchId, subject, date,
+        chapter: root.querySelector('#br_chapter').value.trim(), topic: root.querySelector('#br_topic').value.trim(),
+        page: root.querySelector('#br_page').value.trim(), completed: root.querySelector('#br_completed').value.trim(),
+        homework, homeworkDeadline, understanding:'', weakness:'',
+        nextTopic, note: root.querySelector('#br_note').value.trim(),
+        createdAt: new Date().toISOString()
+      };
+      DB.classRecords.push(rec);
+
+      members.forEach(m=>{
+        // attendance — per member, from the tap state above
+        upsertAttendance(m.id, date, attState[m.id]||'Present');
+
+        // homework — one entry per member so their individual Homework tab and
+        // the Dashboard's pending-homework count both pick it up correctly
+        if(homework){
+          DB.homework.push({id:uid('hw'), studentId:m.id, subject, homework, givenDate:date, dueDate:homeworkDeadline||date, status:'Pending', classRecordId:rec.id});
+        }
+
+        // personal override — creates a SEPARATE class record just for this
+        // member, which then takes precedence over the shared one when their
+        // own "last stopping point" is looked up.
+        const overrideInput = root.querySelector(`[data-override-hw="${m.id}"]`);
+        const overrideText = overrideInput ? overrideInput.value.trim() : '';
+        if(overrideText){
+          const personalRec = {
+            id: uid('rec'), studentId:m.id, subject, date,
+            chapter: rec.chapter, topic: rec.topic, page: rec.page, completed: rec.completed,
+            homework: overrideText, homeworkDeadline, understanding:'', weakness:'',
+            nextTopic: overrideText, note: `Personal note (batch: ${batch.name})`,
+            createdAt: new Date().toISOString()
+          };
+          DB.classRecords.push(personalRec);
+          DB.homework.push({id:uid('hw'), studentId:m.id, subject, homework:overrideText, givenDate:date, dueDate:homeworkDeadline||date, status:'Pending', classRecordId:personalRec.id});
+        }
+      });
+
+      saveDB(); closeModal(); navigate('studentDetail',{id:batchId,tab:'overview'}); toast('Class record saved for the whole batch');
+    });
+  }});
+}
+
+/* ---------- Homework form ---------- */
+/* ---------- Fix a past attendance entry — the tap-to-correct that was missing ---------- */
+function openAttendanceEditForm(studentId, date){
+  const s = studentById(studentId);
+  const existing = DB.attendance.find(a=>a.studentId===studentId && a.date===date);
+  openModal(`
+    ${modalHead('Correct Attendance — '+date)}
+    <div class="page-sub" style="margin-bottom:14px;">${escapeHTML(s?s.name:'')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      ${['Present','Absent','Late','Cancelled'].map(st=>`<button type="button" class="btn sm ${existing&&existing.status===st?'primary':''}" data-att-pick="${st}">${st}</button>`).join('')}
+    </div>
+    <div class="modal-actions">
+      <button class="btn danger" id="att_deleteBtn">Delete Entry</button>
+      <button class="btn primary" id="att_saveBtn" disabled>Save</button>
+    </div>
+  `,{onMount:(root)=>{
+    let picked = existing ? existing.status : null;
+    const saveBtn = root.querySelector('#att_saveBtn');
+    if(picked) saveBtn.disabled = false;
+    root.querySelectorAll('[data-att-pick]').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        picked = btn.dataset.attPick;
+        root.querySelectorAll('[data-att-pick]').forEach(b=>b.classList.remove('primary'));
+        btn.classList.add('primary');
+        saveBtn.disabled = false;
+      });
+    });
+    saveBtn.addEventListener('click',()=>{
+      upsertAttendance(studentId, date, picked);
+      saveDB(); closeModal(); render(); toast('Attendance corrected');
+    });
+    root.querySelector('#att_deleteBtn').addEventListener('click',()=>{
+      if(confirm('Remove this attendance entry entirely?')){
+        DB.attendance = DB.attendance.filter(a=>!(a.studentId===studentId && a.date===date));
+        saveDB(); closeModal(); render(); toast('Attendance entry removed');
+      }
+    });
+  }});
+}
+
+function openHomeworkForm(studentId){
+  const s = studentById(studentId);
+  const subjects = s.subjects&&s.subjects.length? s.subjects : DB.subjects;
+  openModal(`
+    ${modalHead('Assign Homework')}
+    <div class="field"><label>Subject</label><select id="h_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Homework</label><textarea id="h_text"></textarea></div>
+    <div class="grid2">
+      <div class="field"><label>Given date</label><input type="date" id="h_given" value="${todayISO()}"></div>
+      <div class="field"><label>Due date</label><input type="date" id="h_due" value="${todayISO()}"></div>
+    </div>
+    <div class="modal-actions"><button class="btn primary block" id="saveHwBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#saveHwBtn').addEventListener('click',()=>{
+      const text = root.querySelector('#h_text').value.trim();
+      if(!text){ alert('Enter the homework'); return; }
+      DB.homework.push({id:uid('hw'), studentId, subject:root.querySelector('#h_subject').value, homework:text,
+        givenDate:root.querySelector('#h_given').value, dueDate:root.querySelector('#h_due').value, status:'Pending'});
+      saveDB(); closeModal(); render(); toast('Homework assigned');
+    });
+  }});
+}
+
+/* ---------- Flexible payment form — supports advance payments (future months) ---------- */
+function openPaymentForm(studentId){
+  const s = studentById(studentId);
+  const thisMonth = todayISO().slice(0,7);
+  openModal(`
+    ${modalHead('Record Payment — '+escapeHTML(s.name))}
+    <div class="field"><label>Month</label><input type="month" id="p_month" value="${thisMonth}"></div>
+    <div class="hint" style="margin:-6px 0 12px;">Pick a future month to record an advance payment.</div>
+    <div class="field"><label>Amount (৳)</label><input type="number" id="p_amount" value="${s.monthlyFee||0}"></div>
+    <div class="grid2">
+      <div class="field"><label>Payment date</label><input type="date" id="p_date" value="${todayISO()}"></div>
+      <div class="field"><label>Method</label><select id="p_method">${['Cash','bKash','Nagad','Bank','Other'].map(m=>`<option>${m}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Notes (optional)</label><input id="p_notes"></div>
+    <div class="modal-actions"><button class="btn primary block" id="p_saveBtn">Record Payment</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#p_saveBtn').addEventListener('click',()=>{
+      const month = root.querySelector('#p_month').value;
+      const amount = Number(root.querySelector('#p_amount').value)||0;
+      if(!month || amount<=0){ alert('Enter a valid month and amount'); return; }
+      let f = DB.fees.find(x=>x.studentId===studentId && x.month===month);
+      if(!f){ f={id:uid('fee'), studentId, month, monthlyFee:s.monthlyFee, paid:0, paymentDate:null, method:'Cash', notes:''}; DB.fees.push(f); }
+      // Adds to any existing amount for that month, so partial installments (or an
+      // advance on top of an already-paid month) accumulate rather than overwrite.
+      f.paid = Number(f.paid||0) + amount;
+      f.paymentDate = root.querySelector('#p_date').value || todayISO();
+      f.method = root.querySelector('#p_method').value;
+      const note = root.querySelector('#p_notes').value.trim();
+      if(note) f.notes = f.notes ? f.notes+' · '+note : note;
+      saveDB(); closeModal(); render();
+      const isFuture = month > thisMonth;
+      toast(isFuture ? `Advance payment recorded for ${monthLabel(month)}` : 'Payment recorded');
+    });
+  }});
+}
+
+/* ---------- Edit/correct a specific month — overwrites (not adds), so a
+   mistaken "Mark fully paid" or wrong amount can actually be undone. ---------- */
+function openFeeEditForm(studentId, month){
+  const s = studentById(studentId);
+  let f = DB.fees.find(x=>x.studentId===studentId && x.month===month);
+  openModal(`
+    ${modalHead('Correct — '+monthLabel(month))}
+    <div class="page-sub" style="margin-bottom:12px;">This overwrites the paid amount for ${escapeHTML(s.name)}'s ${monthLabel(month)} — use it to fix a mistake, undo an accidental "fully paid," or clear a month entirely.</div>
+    <div class="field"><label>Paid amount (৳) — set to 0 to undo</label><input type="number" id="fe_amount" value="${f?f.paid:0}"></div>
+    <div class="grid2">
+      <div class="field"><label>Payment date</label><input type="date" id="fe_date" value="${f&&f.paymentDate?f.paymentDate:todayISO()}"></div>
+      <div class="field"><label>Method</label><select id="fe_method">${['Cash','bKash','Nagad','Bank','Other'].map(m=>`<option ${f&&f.method===m?'selected':''}>${m}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Notes</label><input id="fe_notes" value="${f?escapeHTML(f.notes||''):''}"></div>
+    <div class="modal-actions">
+      ${f?`<button class="btn danger" id="fe_deleteBtn">Delete Record</button>`:''}
+      <button class="btn primary" id="fe_saveBtn">Save</button>
+    </div>
+  `,{onMount:(root)=>{
+    root.querySelector('#fe_saveBtn').addEventListener('click',()=>{
+      const amount = Number(root.querySelector('#fe_amount').value)||0;
+      if(!f){ f={id:uid('fee'), studentId, month, monthlyFee:s.monthlyFee, paid:0, paymentDate:null, method:'Cash', notes:''}; DB.fees.push(f); }
+      f.paid = amount; // overwrite, unlike Record Payment which adds
+      f.paymentDate = root.querySelector('#fe_date').value || null;
+      f.method = root.querySelector('#fe_method').value;
+      f.notes = root.querySelector('#fe_notes').value.trim();
+      saveDB(); closeModal(); render(); toast('Corrected');
+    });
+    const del = root.querySelector('#fe_deleteBtn');
+    if(del) del.addEventListener('click',()=>{
+      if(confirm(`Delete the fee record for ${monthLabel(month)}? This resets it to unpaid.`)){
+        DB.fees = DB.fees.filter(x=>x.id!==f.id); saveDB(); closeModal(); render(); toast('Fee record deleted');
+      }
+    });
+  }});
+}
+
+/* ---------- Exam form ---------- */
+function openExamForm(studentId, examId, forMarksEntry){
+  const students = DB.students;
+  const existing = examId ? DB.exams.find(e=>e.id===examId) : null;
+  const status0 = forMarksEntry ? 'Completed' : (existing ? (existing.status||'Completed') : 'Scheduled');
+  openModal(`
+    ${modalHead(existing? 'Edit Exam' : 'Add Exam')}
+    ${!studentId? `<div class="field"><label>Student</label><select id="e_student">${students.map(s=>`<option value="${s.id}" ${existing&&existing.studentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}</select></div>`:''}
+    <div class="field"><label>Exam name</label><input id="e_name" placeholder="e.g. Weekly Test" value="${existing?escapeHTML(existing.name):''}"></div>
+    <div class="field"><label>Subject</label><select id="e_subject">${DB.subjects.map(sub=>`<option ${existing&&existing.subject===sub?'selected':''}>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Chapter (optional)</label><input id="e_chapter" value="${existing?escapeHTML(existing.chapter||''):''}"></div>
+    <div class="field"><label>Date</label><input type="date" id="e_date" value="${existing?existing.date:todayISO()}"></div>
+    <div class="field"><label>Status</label>
+      <select id="e_status">
+        <option value="Scheduled" ${status0==='Scheduled'?'selected':''}>Scheduled (no marks yet)</option>
+        <option value="Completed" ${status0==='Completed'?'selected':''}>Completed (marks entered)</option>
+      </select>
+      <div class="hint">Entering an "Obtained" value below automatically switches this to Completed — change it back manually if that's not right.</div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Total marks</label><input type="number" id="e_total" value="${existing?existing.total:100}"></div>
+      <div class="field"><label>Obtained</label><input type="number" id="e_obtained" value="${existing?existing.obtained:0}"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="e_notes">${existing?escapeHTML(existing.notes||''):''}</textarea></div>
+    <div class="modal-actions">
+      ${existing?`<button class="btn danger" id="delExamBtn">Delete</button>`:''}
+      <button class="btn primary" id="saveExamBtn">${existing?'Save Changes':'Save Exam'}</button>
+    </div>
+  `,{onMount:(root)=>{
+    root.querySelector('#e_obtained').addEventListener('input', (e)=>{
+      if(Number(e.target.value) > 0){ root.querySelector('#e_status').value = 'Completed'; }
+    });
+    if(forMarksEntry) root.querySelector('#e_obtained').focus();
+    root.querySelector('#saveExamBtn').addEventListener('click',()=>{
+      const sid = studentId || root.querySelector('#e_student').value;
+      const name = root.querySelector('#e_name').value.trim();
+      if(!name || !sid){ alert('Exam name and student are required'); return; }
+      const data = {
+        studentId:sid, name, subject:root.querySelector('#e_subject').value,
+        chapter:root.querySelector('#e_chapter').value.trim(), date:root.querySelector('#e_date').value,
+        status:root.querySelector('#e_status').value,
+        total:Number(root.querySelector('#e_total').value)||0, obtained:Number(root.querySelector('#e_obtained').value)||0,
+        notes:root.querySelector('#e_notes').value.trim()
+      };
+      if(existing){ Object.assign(existing, data); }
+      else { DB.exams.push(Object.assign({id:uid('exam')}, data)); }
+      saveDB(); closeModal(); render(); toast(existing?'Exam updated':'Exam scheduled');
+    });
+    const del = root.querySelector('#delExamBtn');
+    if(del) del.addEventListener('click',()=>{
+      if(confirm('Delete this exam?')){ DB.exams = DB.exams.filter(x=>x.id!==existing.id); saveDB(); closeModal(); render(); toast('Exam deleted'); }
+    });
+  }});
+}
+
+/* ---------- Syllabus form ---------- */
+function openSyllabusForm(studentId){
+  const s = studentById(studentId);
+  const subjects = s.subjects&&s.subjects.length? s.subjects : DB.subjects;
+  openModal(`
+    ${modalHead('Add Syllabus Item')}
+    <div class="field"><label>Subject</label><select id="sy_subject">${subjects.map(sub=>`<option>${escapeHTML(sub)}</option>`).join('')}</select></div>
+    <div class="field"><label>Chapter</label><input id="sy_chapter"></div>
+    <div class="field"><label>Topic (optional)</label><input id="sy_topic"></div>
+    <div class="field"><label>Status</label><select id="sy_status">${['Not Started','In Progress','Completed','Revision'].map(u=>`<option>${u}</option>`).join('')}</select></div>
+    <div class="modal-actions"><button class="btn primary block" id="saveSyllabusBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#saveSyllabusBtn').addEventListener('click',()=>{
+      const chapter = root.querySelector('#sy_chapter').value.trim();
+      if(!chapter){ alert('Chapter is required'); return; }
+      DB.syllabus.push({id:uid('syl'), studentId, subject:root.querySelector('#sy_subject').value, chapter,
+        topic:root.querySelector('#sy_topic').value.trim(), status:root.querySelector('#sy_status').value});
+      saveDB(); closeModal(); render(); toast('Syllabus item added');
+    });
+  }});
+}
+
+/* ---------- Copy syllabus from another student ---------- */
+function openCopySyllabusForm(studentId){
+  const target = studentById(studentId);
+  const sources = DB.students.filter(x=>x.id!==studentId && DB.syllabus.some(sy=>sy.studentId===x.id));
+  if(sources.length===0){ toast('No other student has syllabus items to copy yet'); return; }
+  openModal(`
+    ${modalHead('Copy Syllabus From')}
+    <div class="field"><label>Source student</label>
+      <select id="cs_source">${sources.map(x=>`<option value="${x.id}">${escapeHTML(x.name)}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Subjects to copy</label>
+      <div class="chip-select" id="cs_subjects"></div>
+      <div class="hint">Progress status resets to "Not Started" for ${escapeHTML(target.name)} — the chapter/topic list is shared, not the completion state.</div>
+    </div>
+    <div class="modal-actions"><button class="btn primary block" id="cs_saveBtn">Copy Selected</button></div>
+  `,{onMount:(root)=>{
+    function renderSubjectChips(){
+      const srcId = root.querySelector('#cs_source').value;
+      const subjs = [...new Set(DB.syllabus.filter(sy=>sy.studentId===srcId).map(sy=>sy.subject))];
+      root.querySelector('#cs_subjects').innerHTML = subjs.map(sub=>`<span class="chip on" data-chip="${escapeHTML(sub)}">${escapeHTML(sub)}</span>`).join('');
+      root.querySelectorAll('[data-chip]').forEach(chip=>chip.addEventListener('click',()=>chip.classList.toggle('on')));
+    }
+    root.querySelector('#cs_source').addEventListener('change', renderSubjectChips);
+    renderSubjectChips();
+    root.querySelector('#cs_saveBtn').addEventListener('click',()=>{
+      const srcId = root.querySelector('#cs_source').value;
+      const chosenSubjects = Array.from(root.querySelectorAll('[data-chip].on')).map(c=>c.dataset.chip);
+      if(chosenSubjects.length===0){ alert('Pick at least one subject'); return; }
+      let count=0;
+      chosenSubjects.forEach(subj=>{
+        if(!target.subjects.includes(subj)) target.subjects.push(subj);
+        DB.syllabus.filter(sy=>sy.studentId===srcId && sy.subject===subj).forEach(sy=>{
+          DB.syllabus.push({id:uid('syl'), studentId, subject:subj, chapter:sy.chapter, topic:sy.topic, status:'Not Started'});
+          count++;
+        });
+      });
+      saveDB(); closeModal(); render(); toast(`Copied ${count} item${count===1?'':'s'}`);
+    });
+  }});
+}
+
+/* ---------- Task form ---------- */
+function openTaskForm(){
+  openModal(`
+    ${modalHead('Add Personal Task')}
+    <div class="field"><label>Task</label><input id="t_title" placeholder="e.g. Prepare Class 9 Math"></div>
+    <div class="grid2">
+      <div class="field"><label>Date</label><input type="date" id="t_date" value="${todayISO()}"></div>
+      <div class="field"><label>Priority</label><select id="t_priority">${['High','Medium','Low'].map(p=>`<option>${p}</option>`).join('')}</select></div>
+    </div>
+    <div class="modal-actions"><button class="btn primary block" id="saveTaskBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    root.querySelector('#saveTaskBtn').addEventListener('click',()=>{
+      const title = root.querySelector('#t_title').value.trim();
+      if(!title){ alert('Enter a task'); return; }
+      DB.tasks.push({id:uid('task'), title, date:root.querySelector('#t_date').value||todayISO(), priority:root.querySelector('#t_priority').value, completed:false});
+      saveDB(); closeModal(); render(); toast('Task added');
+    });
+  }});
+}
+
+/* ---------- Study plan entry form ---------- */
+/* ---------- Weekly plan — one student, all 7 days at once. Subject/topic
+   pre-fill from that student's last class record's "next topic" wherever
+   available, so most days need at most a tap-to-confirm rather than typing. ---------- */
+function openWeeklyPlanForm(presetStudentName){
+  DB.studyPlan = DB.studyPlan || [];
+  if(DB.students.length===0){ toast('Add a student first'); return; }
+  const startName = presetStudentName || DB.students[0].name;
+
+  openModal(`
+    ${modalHead('Plan a Week')}
+    <div class="field"><label>Student/Batch</label>
+      <select id="wp_student">${DB.students.map(s=>`<option value="${escapeHTML(s.name)}" ${s.name===startName?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}</select>
+    </div>
+    <div id="wp_days"></div>
+    <div class="hint" style="margin-bottom:14px;">"+ Add subject" if a day needs more than one — e.g. Math and English the same day. Saving replaces this student's whole week with what's shown here.</div>
+    <div class="modal-actions"><button class="btn primary block" id="wp_saveBtn">Save Week</button></div>
+  `,{onMount:(root)=>{
+    function studentSubjects(name){
+      const student = DB.students.find(x=>x.name===name);
+      return (student && student.subjects && student.subjects.length) ? student.subjects : DB.subjects;
+    }
+    function suggestTopic(name, subject){
+      const student = DB.students.find(x=>x.name===name);
+      if(!student || !subject) return '';
+      const rec = lastClassRecord(student.id, subject);
+      return rec && rec.nextTopic ? rec.nextTopic : '';
+    }
+    function subjectOptionsHTML(studentName, selected){
+      const subjects = studentSubjects(studentName);
+      return `<option value="">— skip —</option>` +
+        subjects.map(sub=>`<option value="${escapeHTML(sub)}" ${selected===sub?'selected':''}>${escapeHTML(sub)}</option>`).join('');
+    }
+    function makeRow(studentName, subject, topic){
+      const row = document.createElement('div');
+      row.className = 'grid2';
+      row.dataset.row = '1';
+      row.style.marginBottom = '6px';
+      row.innerHTML = `
+        <select data-row-subject>${subjectOptionsHTML(studentName, subject||'')}</select>
+        <div style="display:flex;gap:6px;">
+          <input data-row-topic placeholder="Topic" value="${topic?escapeHTML(topic):''}" style="flex:1;">
+          <button type="button" class="btn sm ghost" data-remove-row style="flex:none;">✕</button>
+        </div>`;
+      row.querySelector('[data-row-subject]').addEventListener('change', (e)=>{
+        const topicInput = row.querySelector('[data-row-topic]');
+        if(e.target.value){
+          const suggestion = suggestTopic(root.querySelector('#wp_student').value, e.target.value);
+          if(suggestion) topicInput.value = suggestion;
+        }
+      });
+      row.querySelector('[data-remove-row]').addEventListener('click', ()=>row.remove());
+      return row;
+    }
+    function renderDayRows(studentName){
+      const existing = (DB.studyPlan||[]).filter(p=>p.student===studentName);
+      root.querySelector('#wp_days').innerHTML = WEEKDAYS.map(day=>`
+        <div class="field" data-day-block="${day}">
+          <label>${day}</label>
+          <div data-rows-container="${day}"></div>
+          <button type="button" class="btn sm ghost" data-add-row="${day}" style="margin-top:2px;">+ Add subject</button>
+        </div>`).join('');
+      WEEKDAYS.forEach(day=>{
+        const container = root.querySelector(`[data-rows-container="${day}"]`);
+        const dayEntries = existing.filter(p=>p.day===day);
+        const rowsToMake = dayEntries.length ? dayEntries : [null]; // always show at least one blank row
+        rowsToMake.forEach(entry=>{
+          container.appendChild(makeRow(studentName, entry?entry.subject:'', entry?entry.topic:''));
+        });
+      });
+      root.querySelectorAll('[data-add-row]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const container = root.querySelector(`[data-rows-container="${btn.dataset.addRow}"]`);
+          container.appendChild(makeRow(root.querySelector('#wp_student').value, '', ''));
+        });
+      });
+    }
+    renderDayRows(startName);
+    root.querySelector('#wp_student').addEventListener('change', (e)=>renderDayRows(e.target.value));
+
+    root.querySelector('#wp_saveBtn').addEventListener('click',()=>{
+      const studentName = root.querySelector('#wp_student').value;
+      DB.studyPlan = (DB.studyPlan||[]).filter(p=>p.student!==studentName); // full-week replace, idempotent re-planning
+      let count=0;
+      WEEKDAYS.forEach(day=>{
+        const container = root.querySelector(`[data-rows-container="${day}"]`);
+        container.querySelectorAll('[data-row]').forEach(row=>{
+          const subj = row.querySelector('[data-row-subject]').value;
+          const topic = row.querySelector('[data-row-topic]').value.trim();
+          if(subj){
+            DB.studyPlan.push({id:uid('plan'), day, student:studentName, subject:subj, topic});
+            count++;
+          }
+        });
+      });
+      saveDB(); closeModal(); render();
+      toast(count>0 ? `Week planned for ${studentName} (${count} entr${count===1?'y':'ies'})` : `Cleared ${studentName}'s week`);
+    });
+  }});
+}
+
+/* =========================================================================
+   GLOBAL SEARCH
+   ========================================================================= */
+function runSearch(q){
+  q = q.trim().toLowerCase();
+  const resultsEl = document.getElementById('searchResults');
+  if(!q){ resultsEl.style.display='none'; resultsEl.innerHTML=''; return; }
+  const groups = [];
+
+  const students = DB.students.filter(s=>s.name.toLowerCase().includes(q));
+  if(students.length) groups.push(['Students', students.map(s=>({label:s.name+' — '+typeLabel(s.type), go:()=>navigate('studentDetail',{id:s.id})}))]);
+
+  const subjects = DB.subjects.filter(s=>s.toLowerCase().includes(q));
+  if(subjects.length) groups.push(['Subjects', subjects.map(s=>({label:s, go:()=>navigate('settings')}))]);
+
+  const recs = DB.classRecords.filter(r=>(r.subject+' '+r.chapter+' '+r.topic+' '+r.note).toLowerCase().includes(q));
+  if(recs.length) groups.push(['Class Records', recs.slice(0,8).map(r=>{ const st=studentById(r.studentId); return {label:`${st?st.name:'?'} · ${r.subject} · ${r.date}`, go:()=>navigate('studentDetail',{id:r.studentId,tab:'records'})}; })]);
+
+  const exams = DB.exams.filter(e=>(e.name+' '+e.subject).toLowerCase().includes(q));
+  if(exams.length) groups.push(['Exams', exams.slice(0,8).map(e=>{ const st=studentById(e.studentId); return {label:`${e.name} — ${st?st.name:'?'}`, go:()=>navigate('studentDetail',{id:e.studentId,tab:'exams'})}; })]);
+
+  const hw = DB.homework.filter(h=>(h.subject+' '+h.homework).toLowerCase().includes(q));
+  if(hw.length) groups.push(['Homework', hw.slice(0,8).map(h=>{ const st=studentById(h.studentId); return {label:`${st?st.name:'?'} · ${h.subject}: ${h.homework}`, go:()=>navigate('studentDetail',{id:h.studentId,tab:'homework'})}; })]);
+
+  if(groups.length===0){ resultsEl.style.display='block'; resultsEl.innerHTML = `<div class="sr-item">No results for "${escapeHTML(q)}"</div>`; return; }
+
+  resultsEl.style.display='block';
+  resultsEl.innerHTML = groups.map(([cat,items])=>items.map((it,i)=>`
+    <div class="sr-item" data-sr="${cat}-${i}">${i===0?`<div class="sr-cat">${cat}</div>`:''}${escapeHTML(it.label)}</div>
+  `).join('')).join('');
+
+  let flatIdx=0;
+  groups.forEach(([cat,items])=>items.forEach(it=>{
+    const el = resultsEl.querySelector(`[data-sr="${cat}-${items.indexOf(it)}"]`);
+    if(el) el.addEventListener('click', ()=>{ it.go(); document.getElementById('searchBar').style.display='none'; resultsEl.style.display='none'; document.getElementById('searchInput').value=''; });
+  }));
+}
+
+/* =========================================================================
+   DEMO DATA
+   ========================================================================= */
+function loadDemoData(){
+  const batch = {id:uid('stu'), name:"4 o'clock Batch", type:'batch', isGroup:true, class:'9', school:'', subjects:['English','Math'], guardianName:'',guardianPhone:'',area:'',monthlyFee:0, joiningDate:todayISO(), active:true, notes:'Evening batch, 4:00–5:15 PM', createdAt:new Date().toISOString()};
+  const anika = {id:uid('stu'), name:'Anika', type:'private', class:'6', school:'', subjects:['Bangla','English','Math','Science','Social Science'], guardianName:'Anika\'s Father',guardianPhone:'01700000000',area:'Basantapur',monthlyFee:1200, joiningDate:'2026-01-10', active:true, notes:'', createdAt:new Date().toISOString()};
+  const safa = {id:uid('stu'), name:'Safa', type:'private', class:'9', school:'', subjects:['Physics','Chemistry','Biology','Math','English 1st Paper','English 2nd Paper'], guardianName:"Safa's Guardian",guardianPhone:'01800000000',area:'Paba',monthlyFee:2000, joiningDate:'2025-11-01', active:true, notes:'', createdAt:new Date().toISOString()};
+  DB.students.push(batch, anika, safa);
+
+  // Batch members — each is a normal student record with batchId set, so they
+  // each get their own fee/attendance/progress even though class records are
+  // usually shared across the whole batch.
+  const rakib = {id:uid('stu'), name:'Rakib', type:'private', class:'9', school:'', subjects:['English','Math'], batchId:batch.id, guardianName:'',guardianPhone:'',area:'',monthlyFee:1000, joiningDate:todayISO(), active:true, notes:'', createdAt:new Date().toISOString()};
+  const karim = {id:uid('stu'), name:'Karim', type:'private', class:'9', school:'', subjects:['English','Math'], batchId:batch.id, guardianName:'',guardianPhone:'',area:'',monthlyFee:1000, joiningDate:todayISO(), active:true, notes:'', createdAt:new Date().toISOString()};
+  DB.students.push(rakib, karim);
+
+  // Link the editable schedule blocks + Maghrib slot to these demo students,
+  // same as mergeIntoDefaults() does for imported backups with legacy linkName data.
+  (DB.schedule||[]).forEach(blk=>{
+    if(blk.linkName==="4 o'clock Batch") blk.studentId = batch.id;
+    if(blk.linkName==='Anika') blk.studentId = anika.id;
+  });
+  DB.settings.maghribStudentId = safa.id;
+
+  // A shared batch class record + individual attendance/fee status, to show
+  // how the batch feature actually behaves: one lesson, two different fee states.
+  DB.classRecords.push({
+    id:uid('rec'), studentId:batch.id, subject:'Math', date:todayISO(),
+    chapter:'Chapter 2', topic:'Linear Equations', page:'Q1–10',
+    completed:'Introduced linear equations with worked examples on the board.',
+    homework:'Q11–15', homeworkDeadline:todayISO(), understanding:'', weakness:'',
+    nextTopic:'Q16–20', note:'', createdAt:new Date().toISOString()
+  });
+  DB.attendance.push({id:uid('att'), studentId:rakib.id, date:todayISO(), status:'Present'});
+  DB.attendance.push({id:uid('att'), studentId:karim.id, date:todayISO(), status:'Absent'});
+  DB.fees.push({id:uid('fee'), studentId:rakib.id, month:todayISO().slice(0,7), monthlyFee:1000, paid:1000, paymentDate:todayISO(), method:'Cash', notes:''});
+  // Karim's fee left unpaid on purpose — demonstrates that members track separately.
+
+  // Safa syllabus progress per spec example
+  const safaProg = {Physics:60,Chemistry:40,Biology:80,Math:50,'English 1st Paper':60,'English 2nd Paper':30};
+  Object.entries(safaProg).forEach(([subj,pct])=>{
+    const totalItems=5, done=Math.round(totalItems*pct/100);
+    for(let i=1;i<=totalItems;i++){
+      DB.syllabus.push({id:uid('syl'), studentId:safa.id, subject:subj, chapter:`Chapter ${i}`, topic:'', status: i<=done?'Completed':'Not Started'});
+    }
+  });
+
+  // Safa Math class record — matches the spec's worked example exactly
+  DB.classRecords.push({
+    id:uid('rec'), studentId:safa.id, subject:'Math', date:todayISO(),
+    chapter:'Chapter 5', topic:'Exercise 5.2', page:'Q1–8',
+    completed:'Covered algebraic simplification methods with worked examples.',
+    homework:'Q9–12', homeworkDeadline:todayISO(), understanding:'Good', weakness:'Needs more practice on factorization',
+    nextTopic:'Q13–20', note:'', createdAt:new Date().toISOString()
+  });
+  DB.homework.push({id:uid('hw'), studentId:safa.id, subject:'Math', homework:'Q9–12', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
+  DB.attendance.push({id:uid('att'), studentId:safa.id, date:todayISO(), status:'Present'});
+  DB.exams.push({id:uid('exam'), studentId:safa.id, name:'Weekly Test', subject:'Physics', chapter:'Ch 1-2', date:todayISO(), total:100, obtained:62, notes:''});
+
+  // Anika demo class record
+  DB.classRecords.push({
+    id:uid('rec'), studentId:anika.id, subject:'English', date:todayISO(),
+    chapter:'Unit 4', topic:'Reading comprehension', page:'p.32-33',
+    completed:'Read passage and discussed vocabulary.', homework:'Answer Q1-5',
+    homeworkDeadline:todayISO(), understanding:'Average', weakness:'', nextTopic:'Grammar: tenses', note:'', createdAt:new Date().toISOString()
+  });
+  DB.homework.push({id:uid('hw'), studentId:anika.id, subject:'English', homework:'Answer Q1-5', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
+  DB.attendance.push({id:uid('att'), studentId:anika.id, date:todayISO(), status:'Present'});
+
+  // A sample task
+  DB.tasks.push({id:uid('task'), title:'Prepare Class 9 Math worksheet', date:todayISO(), priority:'Medium', completed:false});
+
+  saveDB();
+}
+
+/* =========================================================================
+   INIT
+   ========================================================================= */
+document.getElementById('settingsBtn').addEventListener('click', ()=>navigate('settings'));
+document.getElementById('searchToggleBtn').addEventListener('click', ()=>{
+  const bar = document.getElementById('searchBar');
+  bar.style.display = bar.style.display==='none' ? 'block' : 'none';
+  if(bar.style.display==='block') document.getElementById('searchInput').focus();
+});
+document.getElementById('searchInput').addEventListener('input', e=>runSearch(e.target.value));
+
+document.getElementById('brandEyebrow').textContent = DB.settings.brand;
+
+// keep "now" highlighting fresh + refresh dashboard/today periodically
+// keep "now" highlighting fresh + refresh dashboard/today periodically.
+// IMPORTANT: never auto-refresh Today while the schedule editor is open —
+// doing so would silently discard whatever the person is mid-typing before
+// they hit Save. This was the root cause of "schedule edits don't save."
+setInterval(()=>{ if(ROUTE.page==='dashboard' || (ROUTE.page==='today' && !todayEditMode)) render(); }, 60000);
+
+render();
+
+// Register service worker for offline app-shell caching (required for a proper
+// standalone/full-screen install on Android). Fails silently on file:// or if
+// unsupported — the app still works fully without it, just not offline-installable.
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(err=>{
+      console.warn('Service worker registration failed (app still works normally):', err);
+    });
+  });
+}
+</script>
+
+</body>
+</html>

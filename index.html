@@ -872,12 +872,27 @@ function awaitingResultsExams(){
   return DB.exams.filter(e=>e.date<=today && (e.status||'Completed')==='Scheduled' && !(Number(e.obtained)>0)).sort((a,b)=>a.date.localeCompare(b.date));
 }
 function unpaidFeesCount(monthISO){
-  const month = monthISO || todayISO().slice(0,7);
   return individualStudents().filter(s=>s.monthlyFee>0).filter(s=>{
-    const f = DB.fees.find(x=>x.studentId===s.id && x.month===month);
-    const paid = f? Number(f.paid||0) : 0;
-    return paid < Number(s.monthlyFee||0);
+    const month = monthISO || relevantFeeMonth(s);
+    return feeStatusFor(s, month).due > 0;
   }).length;
+}
+// Which month's fee status is actually worth surfacing right now. Fees get
+// collected around month-end, so on day 2-3 of a new month "this month is
+// Due" is just noise — nothing's expected to be paid yet. What actually
+// needs attention is last month, if it's still outstanding. Falls forward to
+// the current month once last month is settled (or was never owed).
+function relevantFeeMonth(student, refISO){
+  const cur = (refISO||todayISO()).slice(0,7);
+  const prev = shiftMonth(cur, -1);
+  // A student who joined during (or after) the current month wasn't enrolled
+  // last month — there's nothing actually owed for it, so don't flag it just
+  // because no fee record exists yet (a missing record otherwise defaults to
+  // "expected = monthlyFee, paid = 0", which would wrongly look like a debt).
+  if(student.joiningDate && student.joiningDate.slice(0,7) >= cur) return cur;
+  const prevStatus = feeStatusFor(student, prev);
+  if(prevStatus.expected>0 && prevStatus.due>0) return prev;
+  return cur;
 }
 function feeStatusFor(student, monthISO){
   const month = monthISO || todayISO().slice(0,7);
@@ -1713,14 +1728,16 @@ function renderStudents(){
   ${list.length===0? `<div class="empty"><div class="big">🎓</div>No students yet.</div>` : `
   <div class="list">
     ${list.map(s=>{
-      const fee = feeStatusFor(s);
+      const feeMonth = relevantFeeMonth(s);
+      const fee = feeStatusFor(s, feeMonth);
+      const feeMonthTag = feeMonth!==todayISO().slice(0,7) ? ` (${monthLabel(feeMonth).split(' ')[0]})` : '';
       const parentBatch = s.batchId ? studentById(s.batchId) : null;
       return `
       <div class="item" data-open="${s.id}">
         <div class="dot" style="background:${s.active===false?'var(--ink-faint)':typeColor(s.type)}"></div>
         <div class="body">
           <div class="title">${escapeHTML(s.name)} ${s.isGroup?'<span class="badge muted">Group</span>':''} ${s.active===false?'<span class="badge muted">Inactive</span>':''}</div>
-          <div class="meta">${typeLabel(s.type)}${s.isGroup?` · ${batchMembers(s.id).length} member${batchMembers(s.id).length===1?'':'s'}`:''} · Class ${escapeHTML(s.class||'—')} ${parentBatch?`· via ${escapeHTML(parentBatch.name)}`:''} ${!s.isGroup&&fee.expected>0?`· <span style="color:${fee.status==='Paid'||fee.status==='Advance'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</span>`:''}</div>
+          <div class="meta">${typeLabel(s.type)}${s.isGroup?` · ${batchMembers(s.id).length} member${batchMembers(s.id).length===1?'':'s'}`:''} · Class ${escapeHTML(s.class||'—')} ${parentBatch?`· via ${escapeHTML(parentBatch.name)}`:''} ${!s.isGroup&&fee.expected>0?`· <span style="color:${fee.status==='Paid'||fee.status==='Advance'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}${feeMonthTag}</span>`:''}</div>
         </div>
         <div class="chev">›</div>
       </div>`;
@@ -1785,7 +1802,9 @@ function renderStudentDetail(id, tab){
 function batchOverviewTab(s){
   const members = batchMembers(s.id);
   const subjects = s.subjects && s.subjects.length ? s.subjects : ['General'];
-  const fee = feeStatusFor(s);
+  const feeMonth = relevantFeeMonth(s);
+  const fee = feeStatusFor(s, feeMonth);
+  const feeCardTitle = feeMonth===todayISO().slice(0,7) ? "This Group's Own Fee" : `This Group's Own Fee (${monthLabel(feeMonth)})`;
   const att = attendanceStatsFor(s.id);
   return `
   <div class="card">
@@ -1812,7 +1831,7 @@ function batchOverviewTab(s){
   ${(fee.expected>0 || att.total>0) ? `
   <div class="grid2">
     <div class="card"><div class="card-title">This Group's Own Attendance</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;">${att.pct!==null?att.pct+'%':'—'}</div><div class="page-sub">See the Attendance tab for details</div></div>
-    <div class="card"><div class="card-title">This Group's Own Fee</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">See the Fees tab for details</div></div>
+    <div class="card"><div class="card-title">${feeCardTitle}</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">See the Fees tab for details</div></div>
   </div>
   <div class="hint" style="margin-bottom:14px;">This is the group's own record — separate from any individual members below. Use whichever fits how you actually track this group.</div>
   ` : ''}
@@ -1822,16 +1841,18 @@ function batchOverviewTab(s){
     ${members.length===0? `<div class="page-sub">No members yet. Adding members is optional — only do it if you want to track specific students inside this group individually (their own fee, attendance, progress). If you're just tracking the group as a whole, the Homework/Attendance/Exams/Fees tabs above work directly on the group itself.</div>` : `
     <div class="list">
       ${members.map(m=>{
-        const mfee = feeStatusFor(m);
+        const mMonth = relevantFeeMonth(m);
+        const mfee = feeStatusFor(m, mMonth);
+        const mMonthTag = mMonth!==todayISO().slice(0,7) ? ` (${monthLabel(mMonth).split(' ')[0]})` : '';
         const canMarkPaid = mfee.expected>0 && mfee.status!=='Paid' && mfee.status!=='Advance';
         return `
         <div class="item">
           <div class="dot" style="background:${typeColor(m.type)}" data-open-student="${m.id}"></div>
           <div class="body" data-open-student="${m.id}" style="cursor:pointer;">
             <div class="title">${escapeHTML(m.name)}</div>
-            <div class="meta">Class ${escapeHTML(m.class||'—')} ${mfee.expected>0?`· <span style="color:${mfee.status==='Paid'||mfee.status==='Advance'?'var(--ok)':mfee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${mfee.status}</span>`:'· no fee set'}</div>
+            <div class="meta">Class ${escapeHTML(m.class||'—')} ${mfee.expected>0?`· <span style="color:${mfee.status==='Paid'||mfee.status==='Advance'?'var(--ok)':mfee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${mfee.status}${mMonthTag}</span>`:'· no fee set'}</div>
           </div>
-          ${canMarkPaid? `<button class="btn sm" data-mark-paid="${m.id}|${todayISO().slice(0,7)}">Mark Paid</button>` : `<div class="chev" data-open-student="${m.id}" style="cursor:pointer;">›</div>`}
+          ${canMarkPaid? `<button class="btn sm" data-mark-paid="${m.id}|${mMonth}">Mark Paid</button>` : `<div class="chev" data-open-student="${m.id}" style="cursor:pointer;">›</div>`}
         </div>`;
       }).join('')}
     </div>`}
@@ -1866,7 +1887,9 @@ function batchRecordsTab(s){
 
 function studentOverviewTab(s){
   const subjects = s.subjects && s.subjects.length ? s.subjects : ['General'];
-  const fee = feeStatusFor(s);
+  const feeMonth = relevantFeeMonth(s);
+  const fee = feeStatusFor(s, feeMonth);
+  const feeCardTitle = feeMonth===todayISO().slice(0,7) ? 'Fee (this month)' : `Fee (${monthLabel(feeMonth)})`;
   const att = attendanceStatsFor(s.id);
   return `
   <div class="card">
@@ -1888,7 +1911,7 @@ function studentOverviewTab(s){
   </div>
   <div class="grid2">
     <div class="card"><div class="card-title">Attendance</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;">${att.pct!==null?att.pct+'%':'—'}</div><div class="page-sub">Present ${att.present} · Absent ${att.absent} · Late ${att.late}</div></div>
-    <div class="card"><div class="card-title">Fee (this month)</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">${fee.expected>0?`Due ${fmtMoney(fee.due)}`:'No fee set'}</div></div>
+    <div class="card"><div class="card-title">${feeCardTitle}</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">${fee.expected>0?`Due ${fmtMoney(fee.due)}`:'No fee set'}</div></div>
   </div>
   ${s.guardianPhone||s.notes? `<div class="card"><div class="card-title">Notes</div>${s.notes?`<div style="margin-bottom:8px;">${escapeHTML(s.notes)}</div>`:''}${s.guardianPhone?`<div class="page-sub">Guardian: ${escapeHTML(s.guardianName||'')} ${s.guardianPhone?' · '+escapeHTML(s.guardianPhone):''}</div>`:''}</div>`:''}
   ${(()=>{

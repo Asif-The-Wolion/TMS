@@ -1109,7 +1109,7 @@ function renderDashboard(){
       <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${DB.students.filter(s=>!s.isGroup).length}</div><div class="lbl">Total students</div></div>
       <div class="stat ${pendingHw>0?'hot':''}" data-stat-nav="homework" style="cursor:pointer;"><div class="num">${pendingHw}</div><div class="lbl">Pending homework</div></div>
       <div class="stat ${exams14.length>0?'hot':''}" data-stat-nav="exams" style="cursor:pointer;"><div class="num">${exams14.length}</div><div class="lbl">Upcoming exams</div></div>
-      <div class="stat ${unpaid>0?'hot':''}" data-stat-nav="fees" style="grid-column:span 2;cursor:pointer;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees this month</div></div>
+      <div class="stat ${unpaid>0?'hot':''}" data-stat-nav="fees" style="grid-column:span 2;cursor:pointer;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees${unpaid>0?' (last unsettled month, per student)':''}</div></div>
     </div>
   </div>
 

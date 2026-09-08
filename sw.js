@@ -10,7 +10,7 @@
 // Prayer-time API calls are NEVER cached here — handled separately inside
 // the app itself (localStorage-based cache), so Maghrib is never stale.
 
-const CACHE_NAME = 'teacher-planner-v2'; // bumped so every existing install force-refreshes once
+const CACHE_NAME = 'teacher-planner-v3'; // bumped again — this deploy also fixes the fetch() below to bypass the browser's own HTTP cache, not just the SW cache
 const APP_SHELL = [
   './',
   './index.html',
@@ -43,7 +43,7 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
 
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' }) // bypass the browser's own HTTP disk-cache too, not just the SW cache — GitHub Pages sends Cache-Control: max-age on static files, so a plain fetch() can still return a stale response within that window even though this handler is "network-first". no-store forces a real network round-trip every time.
       .then((response) => {
         if (response && response.ok) {
           const clone = response.clone();

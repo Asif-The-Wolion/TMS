@@ -885,14 +885,13 @@ function unpaidFeesCount(monthISO){
 function relevantFeeMonth(student, refISO){
   const cur = (refISO||todayISO()).slice(0,7);
   const prev = shiftMonth(cur, -1);
-  // A student who joined during (or after) the current month wasn't enrolled
-  // last month — there's nothing actually owed for it, so don't flag it just
-  // because no fee record exists yet (a missing record otherwise defaults to
-  // "expected = monthlyFee, paid = 0", which would wrongly look like a debt).
-  if(student.joiningDate && student.joiningDate.slice(0,7) >= cur) return cur;
-  const prevStatus = feeStatusFor(student, prev);
-  if(prevStatus.expected>0 && prevStatus.due>0) return prev;
-  return cur;
+  // Fees get settled at month-end — so the month whose status should be shown
+  // right now is ALWAYS the last completed month, regardless of whether it's
+  // already fully paid or not. The month currently in progress never shows
+  // as due (paid or otherwise) until it, too, has finished — it only becomes
+  // "the relevant month" once the calendar rolls into the month after it.
+  if(student.joiningDate && student.joiningDate.slice(0,7) >= cur) return cur; // wasn't enrolled last month — nothing to show for it
+  return prev;
 }
 function feeStatusFor(student, monthISO){
   const month = monthISO || todayISO().slice(0,7);
@@ -1109,7 +1108,7 @@ function renderDashboard(){
       <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${DB.students.filter(s=>!s.isGroup).length}</div><div class="lbl">Total students</div></div>
       <div class="stat ${pendingHw>0?'hot':''}" data-stat-nav="homework" style="cursor:pointer;"><div class="num">${pendingHw}</div><div class="lbl">Pending homework</div></div>
       <div class="stat ${exams14.length>0?'hot':''}" data-stat-nav="exams" style="cursor:pointer;"><div class="num">${exams14.length}</div><div class="lbl">Upcoming exams</div></div>
-      <div class="stat ${unpaid>0?'hot':''}" data-stat-nav="fees" style="grid-column:span 2;cursor:pointer;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees${unpaid>0?' (last unsettled month, per student)':''}</div></div>
+      <div class="stat ${unpaid>0?'hot':''}" data-stat-nav="fees" style="grid-column:span 2;cursor:pointer;"><div class="num">${unpaid}</div><div class="lbl">Students with unpaid fees (last month)</div></div>
     </div>
   </div>
 

@@ -901,11 +901,20 @@ function feeTrackedStudents(){ return DB.students.filter(s=>!s.isGroup); }
 // regardless of monthlyFee. A month that only PARTLY overlaps a pause
 // (the toggle happened mid-month) still counts normally — no proration,
 // simplest rule that errs toward not losing track of a real due.
+function daysInMonth(y, m){ // m is 1-12
+  const d31=[1,3,5,7,8,10,12], d30=[4,6,9,11];
+  if(d31.includes(m)) return 31;
+  if(d30.includes(m)) return 30;
+  const leap = (y%4===0 && (y%100!==0 || y%400===0));
+  return leap?29:28;
+}
 function monthFullyPaused(student, monthISO){
   if(!student.pausedPeriods || !student.pausedPeriods.length) return false;
   const monthStart = monthISO+'-01';
   const [y,m] = monthISO.split('-').map(Number);
-  const monthEnd = new Date(y, m, 0).toISOString().slice(0,10); // last calendar day of that month
+  // Pure arithmetic (no Date/toISOString round-trip through UTC) — that
+  // round-trip was computing the last day one day early in UTC+6.
+  const monthEnd = `${monthISO}-${String(daysInMonth(y,m)).padStart(2,'0')}`;
   return student.pausedPeriods.some(p => p.from<=monthStart && (!p.to || p.to>=monthEnd));
 }
 // Which month's fee status is actually worth surfacing right now. Fees get
@@ -2095,17 +2104,23 @@ function studentFeesTab(s){
   `;
 }
 function feeBadgeClass(status){ return status==='Paid'?'ok':status==='Advance'?'ok':status==='Partial'?'warn':'err'; }
+// Both rebuilt on shiftMonth (pure arithmetic, no Date/toISOString) instead
+// of each doing its own local-Date-to-UTC round trip — that was the same
+// bug as shiftMonth's, and independently produced months in the wrong
+// order too. Single source of truth now: fix shiftMonth, both of these
+// inherit the fix automatically.
 function monthsWindow(pastCount, futureCount){
-  const arr=[]; const d=new Date(todayISO()+'T12:00:00');
+  const cur = todayISO().slice(0,7);
+  const arr=[];
   for(let i=(futureCount||0); i>=-(pastCount||0); i--){
-    const y=d.getFullYear(), m=d.getMonth()+1-i; const dd=new Date(y,m-1,1);
-    arr.push(dd.toISOString().slice(0,7));
+    arr.push(shiftMonth(cur, i));
   }
   return arr;
 }
 function lastNMonths(n){
-  const arr=[]; const d=new Date(todayISO()+'T12:00:00');
-  for(let i=0;i<n;i++){ const y=d.getFullYear(),m=d.getMonth()+1-i; const dd=new Date(y,m-1,1); arr.push(dd.toISOString().slice(0,7)); }
+  const cur = todayISO().slice(0,7);
+  const arr=[];
+  for(let i=0;i<n;i++) arr.push(shiftMonth(cur, -i));
   return arr;
 }
 function monthLabel(m){ const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
@@ -3146,10 +3161,20 @@ function openAttendanceCalendar(studentId){
     draw();
   }});
 }
+// Pure integer arithmetic — deliberately avoids constructing a Date object
+// and reading it back via toISOString(). That round-trip goes through UTC,
+// and for any positive UTC-offset timezone (Dhaka is UTC+6) a local midnight
+// on the 1st of a month lands on the previous day in UTC — which silently
+// shifts the reported month backward by one whenever the target day is the
+// 1st. This bit Dashboard/Fees "last month" logic directly (Sept → showed
+// July instead of August). No Date object involved here at all now, so the
+// bug class is gone, not just this one instance of it.
 function shiftMonth(monthISO, delta){
   const [y,m] = monthISO.split('-').map(Number);
-  const d = new Date(y, m-1+delta, 1);
-  return d.toISOString().slice(0,7);
+  const total = y*12 + (m-1) + delta;
+  const newY = Math.floor(total/12);
+  const newM = ((total%12)+12)%12 + 1;
+  return `${newY}-${String(newM).padStart(2,'0')}`;
 }
 
 function openHomeworkForm(studentId){

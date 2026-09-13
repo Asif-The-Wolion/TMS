@@ -242,6 +242,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
   </div>
 </div>
 
+<div id="demoBanner" style="display:none;"></div>
 <main id="view"></main>
 
 <div class="bottomnav" id="bottomNav"></div>
@@ -256,7 +257,23 @@ const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
 const APP_BUILD = '2026-08-23.1';
-const DB_KEY = 'tp_db_v1';
+const REAL_DB_KEY = 'tp_db_v1';
+const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
+let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
+let DEMO_MODE = false;
+// True only once real data genuinely exists — students added, a Sheets URL
+// configured, or the person has explicitly gone through onboarding (even
+// "Start Fresh" with zero students still counts, since that's a deliberate
+// real choice). This is the ONLY thing that gates demo mode: if any of this
+// is true, demo is never shown/entered, full stop.
+function hasRealData(){
+  try{
+    const raw = localStorage.getItem(REAL_DB_KEY);
+    if(!raw) return false;
+    const p = JSON.parse(raw);
+    return !!(p && p.settings && (p.settings.onboarded || p.settings.sheetsWebAppUrl || (p.students && p.students.length>0)));
+  }catch(e){ return false; }
+}
 const SUBJECT_DEFAULTS = ['Bangla','English','English 1st Paper','English 2nd Paper','Math','Physics','Chemistry','Biology','Science','Social Science','General Knowledge','Spoken English','মাশক','Other'];
 
 function uid(prefix){
@@ -371,6 +388,13 @@ function mergeIntoDefaults(parsed){
 }
 
 function loadDB(){
+  if(hasRealData()){
+    DB_KEY = REAL_DB_KEY; DEMO_MODE = false;
+  } else if(localStorage.getItem(DEMO_DB_KEY)){
+    DB_KEY = DEMO_DB_KEY; DEMO_MODE = true; // resume an already-started demo browse session
+  } else {
+    DB_KEY = REAL_DB_KEY; DEMO_MODE = false; // genuine first run — nothing decided yet, welcome screen will show
+  }
   try{
     const raw = localStorage.getItem(DB_KEY);
     if(!raw) return defaultDB();
@@ -659,12 +683,14 @@ function daysSinceLastBackup(){
    ========================================================================= */
 let sheetsBackupTimer = null;
 function scheduleSheetsBackup(){
+  if(DEMO_MODE) return; // demo never talks to Sheets, no matter what — hard block, not just "no URL configured"
   if(!DB.settings.sheetsAutoBackup || !DB.settings.sheetsWebAppUrl) return;
   clearTimeout(sheetsBackupTimer);
   sheetsBackupTimer = setTimeout(pushToSheets, 5000);
 }
 
 async function pushToSheets(silent){
+  if(DEMO_MODE){ if(!silent) toast('Sheets backup is disabled in demo mode'); return; }
   const url = DB.settings.sheetsWebAppUrl;
   if(!url) { if(!silent) toast('⚠ Add your Apps Script Web App URL in Settings first'); return; }
   if(!silent) toast('Backing up to Sheet…');
@@ -686,7 +712,8 @@ async function pushToSheets(silent){
   }
 }
 
-async function restoreFromSheets(){
+async function restoreFromSheets(skipConfirm){
+  if(DEMO_MODE){ toast('Sheets restore is disabled in demo mode'); return; }
   const url = DB.settings.sheetsWebAppUrl;
   if(!url){ alert('Add your Apps Script Web App URL in Settings first.'); return; }
   try{
@@ -696,8 +723,10 @@ async function restoreFromSheets(){
     if(!json.ok) throw new Error(json.error||'Restore failed');
     const parsed = json.data;
     if(!parsed || !Array.isArray(parsed.students)) throw new Error('Backup on the sheet looks corrupted or empty');
-    if(!confirm('Replace ALL current data with the Google Sheet backup? This cannot be undone.')) return;
+    if(!skipConfirm && !confirm('Replace ALL current data with the Google Sheet backup? This cannot be undone.')) return;
     DB = mergeIntoDefaults(parsed);
+    DB.settings.onboarded = true;
+    DB_KEY = REAL_DB_KEY; DEMO_MODE = false; // restoring is always a real-account action
     saveDB();
     navigate('dashboard');
     toast('Restored from Google Sheet');
@@ -804,6 +833,7 @@ const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', 
 function render(){
   document.getElementById('pageHeading').textContent = PAGE_TITLES[ROUTE.page] || 'Teacher Planner';
   renderNav();
+  renderDemoBanner();
   const view = document.getElementById('view');
 
   if(!DB.settings.onboarded && DB.students.length===0 && ROUTE.page==='dashboard'){
@@ -826,21 +856,94 @@ function render(){
   }
 }
 
+// A persistent, unmissable indicator whenever the currently-loaded data is
+// the demo store, not a real account — plus a one-tap way out. Rebuilt on
+// every render() since its container's innerHTML is fully replaced each time.
+function renderDemoBanner(){
+  const el = document.getElementById('demoBanner');
+  if(!DEMO_MODE){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  el.innerHTML = `
+    <div style="background:var(--amber-soft, #caa15a);color:#1a1a1a;padding:8px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;font-weight:600;">
+      <span>🧪 DEMO MODE — sample data only, nothing here is saved to a real account</span>
+      <button id="clearDemoBtn" style="background:#1a1a1a;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:600;">Clear Demo</button>
+    </div>`;
+  document.getElementById('clearDemoBtn').addEventListener('click', ()=>{
+    if(!confirm('Clear this demo and go back to the welcome screen? (Your real data, if any, is never touched by this.)')) return;
+    localStorage.removeItem(DEMO_DB_KEY);
+    DB_KEY = REAL_DB_KEY; DEMO_MODE = false;
+    DB = loadDB();
+    navigate('dashboard');
+  });
+}
+
 function renderFirstRun(){
   return `
   <div class="card" style="text-align:center;padding:34px 20px;">
     <div style="font-size:34px;margin-bottom:10px;">📘</div>
     <h2 style="font-size:20px;margin-bottom:8px;">Welcome to Teacher Planner</h2>
-    <p class="page-sub" style="margin-bottom:20px;">Your personal teaching operating system. Load sample data to explore, or start fresh with your own students.</p>
+    <p class="page-sub" style="margin-bottom:20px;">Your personal teaching operating system. Explore it with sample data, restore your existing account, or start fresh with your own students.</p>
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <button class="btn primary block" id="loadDemoBtn">Load Demo Data</button>
+      <button class="btn primary block" id="exploreDemoBtn">Explore Demo</button>
+      <button class="btn block" id="haveAccountBtn">I have an existing account</button>
       <button class="btn block" id="startFreshBtn">Start Fresh</button>
+    </div>
+    <div id="existingAccountForm" style="display:none;text-align:left;margin-top:16px;padding-top:16px;border-top:1px solid var(--line, #333);">
+      <div class="field"><label>Apps Script Web App URL (optional)</label><input id="firstRunSheetsUrl" placeholder="https://script.google.com/macros/s/…/exec"></div>
+      <div class="hint" style="margin-bottom:12px;">If you have a backup file, importing it is faster and more reliable — the Sheets URL is enough on its own too, it'll just take a moment to fetch.</div>
+      <label class="btn block" style="text-align:center;margin-bottom:10px;" id="firstRunImportLabel">Choose Backup File (optional)
+        <input type="file" id="firstRunImportFile" accept="application/json" style="display:none;">
+      </label>
+      <div class="page-sub" id="firstRunFileChosen" style="margin-bottom:12px;"></div>
+      <button class="btn primary block" id="firstRunContinueBtn">Continue</button>
     </div>
   </div>`;
 }
 function bindFirstRun(){
-  document.getElementById('loadDemoBtn').addEventListener('click',()=>{ loadDemoData(); DB.settings.onboarded=true; saveDB(); navigate('dashboard'); toast('Demo data loaded'); });
-  document.getElementById('startFreshBtn').addEventListener('click',()=>{ DB.settings.onboarded=true; saveDB(); navigate('students'); });
+  document.getElementById('exploreDemoBtn').addEventListener('click',()=>{
+    DB_KEY = DEMO_DB_KEY; DEMO_MODE = true; // switch stores BEFORE generating — nothing below ever touches the real key
+    DB = defaultDB();
+    generateRandomDemoData();
+    navigate('dashboard');
+    toast('Exploring demo data — nothing here is saved to a real account');
+  });
+  document.getElementById('startFreshBtn').addEventListener('click',()=>{
+    DB_KEY = REAL_DB_KEY; DEMO_MODE = false;
+    DB.settings.onboarded=true; saveDB(); navigate('students');
+  });
+  document.getElementById('haveAccountBtn').addEventListener('click',()=>{
+    document.getElementById('existingAccountForm').style.display='block';
+  });
+  let firstRunPickedFile = null;
+  document.getElementById('firstRunImportFile').addEventListener('change', e=>{
+    firstRunPickedFile = e.target.files[0] || null;
+    document.getElementById('firstRunFileChosen').textContent = firstRunPickedFile ? `Selected: ${firstRunPickedFile.name}` : '';
+  });
+  document.getElementById('firstRunContinueBtn').addEventListener('click', async ()=>{
+    DB_KEY = REAL_DB_KEY; DEMO_MODE = false; // an existing-account setup is always real, regardless of what was loaded before
+    const url = document.getElementById('firstRunSheetsUrl').value.trim();
+    if(!firstRunPickedFile && !url){ toast('Add a Sheets URL, a backup file, or both'); return; }
+    if(firstRunPickedFile){
+      // A chosen file is the more reliable/authoritative source — load it.
+      // The URL, if also given, is then just saved so future auto-backups
+      // have somewhere to go; it does not additionally overwrite what the
+      // file just loaded.
+      try{
+        const text = await firstRunPickedFile.text();
+        const parsed = JSON.parse(text);
+        if(!parsed || typeof parsed!=='object' || !Array.isArray(parsed.students)) throw new Error('Not a valid backup file');
+        DB = mergeIntoDefaults(parsed);
+      }catch(err){ alert('Import failed: ' + err.message); return; }
+      if(url) DB.settings.sheetsWebAppUrl = url;
+      DB.settings.onboarded = true;
+      saveDB();
+      navigate('dashboard');
+      toast('Account set up');
+    } else {
+      DB.settings.sheetsWebAppUrl = url; // restoreFromSheets reads this, and handles onboarded/save/navigate itself on success
+      await restoreFromSheets(true);
+    }
+  });
 }
 
 /* =========================================================================
@@ -887,6 +990,7 @@ function awaitingResultsExams(){
 function unpaidFeesCount(monthISO){
   return feeTrackedStudents().filter(s=>s.monthlyFee>0).filter(s=>{
     const month = monthISO || relevantFeeMonth(s);
+    if(!month) return false; // nothing completed yet (joined this month) — not unpaid, just not applicable
     return feeStatusFor(s, month).due > 0;
   }).length;
 }
@@ -925,17 +1029,22 @@ function monthFullyPaused(student, monthISO){
 // month that was fully paused (nothing was ever owed for it) until it finds
 // a real month to show — so a genuine unpaid month from BEFORE a pause
 // still surfaces, it doesn't get masked by the pause itself.
+// Returns null when there's nothing to report yet — a student who joined
+// THIS (still in-progress) month has no completed month behind them; the
+// current month itself doesn't count as "relevant" either, per the same
+// invariant above, so callers must treat null as "nothing due, don't show
+// a fee status at all" rather than falling back to the current month.
 function relevantFeeMonth(student, refISO){
   const cur = (refISO||todayISO()).slice(0,7);
-  if(student.joiningDate && student.joiningDate.slice(0,7) >= cur) return cur; // wasn't enrolled last month — nothing to show for it
+  if(student.joiningDate && student.joiningDate.slice(0,7) >= cur) return null; // joined this in-progress month — nothing completed to report yet
   let m = shiftMonth(cur, -1);
   const floor = student.joiningDate ? student.joiningDate.slice(0,7) : null;
   for(let i=0;i<36;i++){ // safety cap — ~3 years back, plenty for any real history
-    if(floor && m<floor) return cur; // walked back before they even joined — nothing further to find
+    if(floor && m<floor) return null; // walked back before they even joined — nothing further to find
     if(!monthFullyPaused(student, m)) return m;
     m = shiftMonth(m, -1);
   }
-  return cur;
+  return null;
 }
 function feeStatusFor(student, monthISO){
   const month = monthISO || todayISO().slice(0,7);
@@ -946,6 +1055,14 @@ function feeStatusFor(student, monthISO){
     return {expected:0, paid:0, due:0, advance:0, status:'—', record:null};
   }
   const f = DB.fees.find(x=>x.studentId===student.id && x.month===month);
+  // A month before the student even joined never had a fee expected by
+  // default either — but if someone explicitly logged a record for it
+  // anyway (backfilling an informal arrangement that predates formal
+  // enrollment), that explicit record is still honored as-is, not masked.
+  const beforeJoining = student.joiningDate && month < student.joiningDate.slice(0,7);
+  if(beforeJoining && !f){
+    return {expected:0, paid:0, due:0, advance:0, status:'—', record:null};
+  }
   // A specific month can override the student's standard monthly fee — e.g. a
   // half-month joining fee. If no record exists yet for this month, or the
   // record never had its own amount set, fall back to the student's default.
@@ -1778,8 +1895,8 @@ function renderStudents(){
   <div class="list">
     ${list.map(s=>{
       const feeMonth = relevantFeeMonth(s);
-      const fee = feeStatusFor(s, feeMonth);
-      const feeMonthTag = feeMonth!==todayISO().slice(0,7) ? ` (${monthLabel(feeMonth).split(' ')[0]})` : '';
+      const fee = feeMonth ? feeStatusFor(s, feeMonth) : {expected:0, status:'—'};
+      const feeMonthTag = feeMonth && feeMonth!==todayISO().slice(0,7) ? ` (${monthLabel(feeMonth).split(' ')[0]})` : '';
       const parentBatch = s.batchId ? studentById(s.batchId) : null;
       return `
       <div class="item" data-open="${s.id}">
@@ -1852,8 +1969,8 @@ function batchOverviewTab(s){
   const members = batchMembers(s.id);
   const subjects = s.subjects && s.subjects.length ? s.subjects : ['General'];
   const feeMonth = relevantFeeMonth(s);
-  const fee = feeStatusFor(s, feeMonth);
-  const feeCardTitle = feeMonth===todayISO().slice(0,7) ? "This Group's Own Fee" : `This Group's Own Fee (${monthLabel(feeMonth)})`;
+  const fee = feeMonth ? feeStatusFor(s, feeMonth) : {expected:0, status:'—'};
+  const feeCardTitle = !feeMonth ? "This Group's Own Fee" : feeMonth===todayISO().slice(0,7) ? "This Group's Own Fee" : `This Group's Own Fee (${monthLabel(feeMonth)})`;
   const att = attendanceStatsFor(s.id);
   return `
   <div class="card">
@@ -1891,8 +2008,8 @@ function batchOverviewTab(s){
     <div class="list">
       ${members.map(m=>{
         const mMonth = relevantFeeMonth(m);
-        const mfee = feeStatusFor(m, mMonth);
-        const mMonthTag = mMonth!==todayISO().slice(0,7) ? ` (${monthLabel(mMonth).split(' ')[0]})` : '';
+        const mfee = mMonth ? feeStatusFor(m, mMonth) : {expected:0, status:'—'};
+        const mMonthTag = mMonth && mMonth!==todayISO().slice(0,7) ? ` (${monthLabel(mMonth).split(' ')[0]})` : '';
         const canMarkPaid = mfee.expected>0 && mfee.status!=='Paid' && mfee.status!=='Advance';
         return `
         <div class="item">
@@ -1937,8 +2054,8 @@ function batchRecordsTab(s){
 function studentOverviewTab(s){
   const subjects = s.subjects && s.subjects.length ? s.subjects : ['General'];
   const feeMonth = relevantFeeMonth(s);
-  const fee = feeStatusFor(s, feeMonth);
-  const feeCardTitle = feeMonth===todayISO().slice(0,7) ? 'Fee (this month)' : `Fee (${monthLabel(feeMonth)})`;
+  const fee = feeMonth ? feeStatusFor(s, feeMonth) : {expected:0, paid:0, due:0, status:'—'};
+  const feeCardTitle = !feeMonth ? 'Fee' : feeMonth===todayISO().slice(0,7) ? 'Fee (this month)' : `Fee (${monthLabel(feeMonth)})`;
   const att = attendanceStatsFor(s.id);
   return `
   <div class="card">
@@ -1960,7 +2077,7 @@ function studentOverviewTab(s){
   </div>
   <div class="grid2">
     <div class="card"><div class="card-title">Attendance</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;">${att.pct!==null?att.pct+'%':'—'}</div><div class="page-sub">Present ${att.present} · Absent ${att.absent} · Late ${att.late}</div></div>
-    <div class="card"><div class="card-title">${feeCardTitle}</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}</div><div class="page-sub">${fee.expected>0?`Due ${fmtMoney(fee.due)}`:'No fee set'}</div></div>
+    <div class="card"><div class="card-title">${feeCardTitle}</div><div class="num" style="font-family:'Fraunces',serif;font-size:24px;color:${fee.status==='Paid'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':fee.status==='—'?'var(--ink-faint)':'var(--err)'}">${fee.status}</div><div class="page-sub">${fee.expected>0?`Due ${fmtMoney(fee.due)}`: !feeMonth && s.monthlyFee>0 ? 'Joined this month — nothing due yet' : 'No fee set'}</div></div>
   </div>
   ${s.guardianPhone||s.notes? `<div class="card"><div class="card-title">Notes</div>${s.notes?`<div style="margin-bottom:8px;">${escapeHTML(s.notes)}</div>`:''}${s.guardianPhone?`<div class="page-sub">Guardian: ${escapeHTML(s.guardianName||'')} ${s.guardianPhone?' · '+escapeHTML(s.guardianPhone):''}</div>`:''}</div>`:''}
   ${(()=>{
@@ -2304,8 +2421,16 @@ function bindExams(){
 /* =========================================================================
    FEES (global dashboard)
    ========================================================================= */
-let feesMonth = shiftMonth(todayISO().slice(0,7), -1); // default to LAST completed month, matching the Dashboard's policy — avoids the two views disagreeing on what "unpaid" means
+// null = no manual pick yet — always follow "last completed month" live.
+// Only gets a real value once the person picks a month via the date input;
+// from then on it stays pinned to that pick (deliberate browse), even across
+// a month rollover, until they pick again. This — rather than a `let`
+// snapshotting shiftMonth() once at script load — is what keeps this tab
+// from going stale if the PWA tab is left open/backgrounded across midnight
+// into a new month, the same class of bug the Dashboard had before.
+let feesMonthOverride = null;
 function renderFees(){
+  const feesMonth = feesMonthOverride || shiftMonth(todayISO().slice(0,7), -1);
   const students = feeTrackedStudents().filter(s=>s.monthlyFee>0);
   let expected=0, collected=0;
   students.forEach(s=>{ const f=feeStatusFor(s,feesMonth); expected+=f.expected; collected+=f.paid; });
@@ -2334,7 +2459,7 @@ function renderFees(){
 }
 function bindFees(){
   const view = document.getElementById('view');
-  view.querySelector('#feesMonthPicker').addEventListener('change', e=>{ feesMonth=e.target.value||feesMonth; render(); });
+  view.querySelector('#feesMonthPicker').addEventListener('change', e=>{ feesMonthOverride=e.target.value||null; render(); });
   view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent,tab:'fees'})));
 }
 
@@ -2575,6 +2700,12 @@ function renderSettings(){
     <div class="hint">Opens your phone's Share menu — pick "Drive" (or "Save to Drive"). No sign-in or setup needed, it uses the Drive app you're already logged into.</div>
   </div>
 
+  ${DEMO_MODE ? `
+  <div class="card">
+    <div class="card-title">Backup to Google Sheets</div>
+    <div class="page-sub">Disabled in demo mode — Sheets backup only applies to a real account.</div>
+  </div>
+  ` : `
   <div class="card">
     <div class="card-title">Backup to Google Sheets</div>
     <div class="page-sub" style="margin-bottom:12px;">
@@ -2589,7 +2720,7 @@ function renderSettings(){
     </div>
     <div class="hint" style="margin-top:10px;">One-time setup: create a Google Sheet, Extensions → Apps Script, paste the provided Code.gs, Deploy → Web App → Anyone with the link → copy the URL here. Only pushes automatically — restoring back always needs an explicit tap on "Restore From Sheet" plus a confirm, so nothing overwrites your data by accident.</div>
   </div>
-
+  `}
   <div class="card">
     <div class="card-title">Data</div>
     <div style="display:flex;flex-direction:column;gap:10px;">
@@ -2597,7 +2728,6 @@ function renderSettings(){
       <label class="btn block" style="text-align:center;" id="importLabel">Import Backup
         <input type="file" id="importFile" accept="application/json" style="display:none;">
       </label>
-      ${DB.students.length===0? `<button class="btn block" id="loadDemoBtn2">Load Demo Data</button>`:''}
       <button class="btn danger block" id="resetBtn">Reset All Data</button>
     </div>
   </div>
@@ -2636,8 +2766,6 @@ function bindSettings(){
   }));
   document.getElementById('exportBtn').addEventListener('click', exportBackup);
   document.getElementById('importFile').addEventListener('change', importBackup);
-  const demoBtn2 = document.getElementById('loadDemoBtn2');
-  if(demoBtn2) demoBtn2.addEventListener('click',()=>{ loadDemoData(); render(); toast('Demo data loaded'); });
   document.getElementById('resetBtn').addEventListener('click',()=>{
     if(confirm('This will permanently delete ALL data on this device. Continue?')){
       if(confirm('Are you absolutely sure? This cannot be undone.')){
@@ -2654,7 +2782,7 @@ function bindSettings(){
   const sheetsBackupNowBtn = document.getElementById('sheetsBackupNowBtn');
   if(sheetsBackupNowBtn) sheetsBackupNowBtn.addEventListener('click', ()=>pushToSheets(false));
   const sheetsRestoreBtn = document.getElementById('sheetsRestoreBtn');
-  if(sheetsRestoreBtn) sheetsRestoreBtn.addEventListener('click', restoreFromSheets);
+  if(sheetsRestoreBtn) sheetsRestoreBtn.addEventListener('click', ()=>restoreFromSheets());
 }
 function exportBackup(){
   downloadBackupFile();
@@ -3558,77 +3686,115 @@ function runSearch(q){
 }
 
 /* =========================================================================
-   DEMO DATA
+   DEMO DATA — entirely fictional, regenerated fresh each time someone
+   clicks "Explore Demo". Deliberately does NOT reuse any of the app's real
+   default identity (teacherName/brand from defaultDB() are Asif's actual
+   name/business) or any real student's name/guardian info — a site visitor
+   should never see anyone's real personal details.
    ========================================================================= */
-function loadDemoData(){
-  const batch = {id:uid('stu'), name:"4 o'clock Batch", type:'batch', isGroup:true, class:'9', school:'', subjects:['English','Math'], guardianName:'',guardianPhone:'',area:'',monthlyFee:0, joiningDate:todayISO(), active:true, notes:'Evening batch, 4:00–5:15 PM', createdAt:new Date().toISOString()};
-  const anika = {id:uid('stu'), name:'Anika', type:'private', class:'6', school:'', subjects:['Bangla','English','Math','Science','Social Science'], guardianName:'Anika\'s Father',guardianPhone:'01700000000',area:'Basantapur',monthlyFee:1200, joiningDate:'2026-01-10', active:true, notes:'', createdAt:new Date().toISOString()};
-  const safa = {id:uid('stu'), name:'Safa', type:'private', class:'9', school:'', subjects:['Physics','Chemistry','Biology','Math','English 1st Paper','English 2nd Paper'], guardianName:"Safa's Guardian",guardianPhone:'01800000000',area:'Paba',monthlyFee:2000, joiningDate:'2025-11-01', active:true, notes:'', createdAt:new Date().toISOString()};
-  DB.students.push(batch, anika, safa);
+const DEMO_NAMES = ['Nadia','Tanvir','Mahin','Riya','Sabbir','Jannat','Fahim','Priya','Rafiq','Meherun','Zubair','Ayesha','Imran','Lamia','Turin'];
+const DEMO_CLASSES = ['5','6','7','8','9','10'];
+function randInt(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+function pick(arr){ return arr[randInt(0,arr.length-1)]; }
+function shuffle(arr){ const a=arr.slice(); for(let i=a.length-1;i>0;i--){ const j=randInt(0,i); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function weightedFeeOutcome(expected){
+  // Mostly paid, sometimes partial, sometimes fully due, occasionally advance — so a
+  // demo viewer sees every real status the app can show, not just "everything's paid".
+  const r = Math.random();
+  if(r<0.60) return expected;
+  if(r<0.75) return 0;
+  if(r<0.90) return Math.round(expected*(randInt(20,70)/100));
+  return expected + randInt(50,300);
+}
+function generateRandomDemoData(){
+  const names = shuffle(DEMO_NAMES);
+  let ni = 0;
+  const nextName = ()=> names[ni++ % names.length];
+  const cur = todayISO().slice(0,7);
+  const monthsBack = randInt(4,6); // "~6 months" of history, a little randomized so repeat visits don't look identical
 
-  // Batch members — each is a normal student record with batchId set, so they
-  // each get their own fee/attendance/progress even though class records are
-  // usually shared across the whole batch.
-  const rakib = {id:uid('stu'), name:'Rakib', type:'private', class:'9', school:'', subjects:['English','Math'], batchId:batch.id, guardianName:'',guardianPhone:'',area:'',monthlyFee:1000, joiningDate:todayISO(), active:true, notes:'', createdAt:new Date().toISOString()};
-  const karim = {id:uid('stu'), name:'Karim', type:'private', class:'9', school:'', subjects:['English','Math'], batchId:batch.id, guardianName:'',guardianPhone:'',area:'',monthlyFee:1000, joiningDate:todayISO(), active:true, notes:'', createdAt:new Date().toISOString()};
-  DB.students.push(rakib, karim);
+  DB.settings.teacherName = 'Demo Teacher';
+  DB.settings.brand = 'Demo Tutoring';
 
-  // Link the editable schedule blocks + Maghrib slot to these demo students,
-  // same as mergeIntoDefaults() does for imported backups with legacy linkName data.
-  (DB.schedule||[]).forEach(blk=>{
-    if(blk.linkName==="4 o'clock Batch") blk.studentId = batch.id;
-    if(blk.linkName==='Anika') blk.studentId = anika.id;
-  });
-  DB.settings.maghribStudentId = safa.id;
+  const students = [];
 
-  // A shared batch class record + individual attendance/fee status, to show
-  // how the batch feature actually behaves: one lesson, two different fee states.
-  DB.classRecords.push({
-    id:uid('rec'), studentId:batch.id, subject:'Math', date:todayISO(),
-    chapter:'Chapter 2', topic:'Linear Equations', page:'Q1–10',
-    completed:'Introduced linear equations with worked examples on the board.',
-    homework:'Q11–15', homeworkDeadline:todayISO(), understanding:'', weakness:'',
-    nextTopic:'Q16–20', note:'', createdAt:new Date().toISOString()
-  });
-  DB.attendance.push({id:uid('att'), studentId:rakib.id, date:todayISO(), status:'Present'});
-  DB.attendance.push({id:uid('att'), studentId:karim.id, date:todayISO(), status:'Absent'});
-  DB.fees.push({id:uid('fee'), studentId:rakib.id, month:todayISO().slice(0,7), monthlyFee:1000, paid:1000, paymentDate:todayISO(), method:'Cash', notes:''});
-  // Karim's fee left unpaid on purpose — demonstrates that members track separately.
+  // A batch/group, to demonstrate that feature too.
+  const batchName = `${pick(['Afternoon','Evening','Weekend'])} Batch`;
+  const batch = {id:uid('stu'), name:batchName, type:'batch', isGroup:true, class:pick(DEMO_CLASSES), school:'', subjects:shuffle(SUBJECT_DEFAULTS.filter(s=>s!=='Other')).slice(0,2), guardianName:'',guardianPhone:'',area:'',monthlyFee:0, joiningDate:shiftMonth(cur,-monthsBack)+'-05', active:true, notes:'Demo batch', createdAt:new Date().toISOString()};
+  DB.students.push(batch); students.push(batch);
 
-  // Safa syllabus progress per spec example
-  const safaProg = {Physics:60,Chemistry:40,Biology:80,Math:50,'English 1st Paper':60,'English 2nd Paper':30};
-  Object.entries(safaProg).forEach(([subj,pct])=>{
-    const totalItems=5, done=Math.round(totalItems*pct/100);
-    for(let i=1;i<=totalItems;i++){
-      DB.syllabus.push({id:uid('syl'), studentId:safa.id, subject:subj, chapter:`Chapter ${i}`, topic:'', status: i<=done?'Completed':'Not Started'});
+  const batchMembersList = [];
+  for(let i=0;i<2;i++){
+    const m = {id:uid('stu'), name:nextName(), type:'private', class:batch.class, school:'', subjects:batch.subjects, batchId:batch.id, guardianName:'',guardianPhone:'',area:'',monthlyFee:randInt(6,15)*100, joiningDate:shiftMonth(cur,-randInt(1,monthsBack))+'-01', active:true, notes:'', createdAt:new Date().toISOString()};
+    DB.students.push(m); students.push(m); batchMembersList.push(m);
+  }
+
+  // 5-7 standalone private students with varied history.
+  const soloCount = randInt(5,7);
+  for(let i=0;i<soloCount;i++){
+    const joinMonthsAgo = randInt(0,monthsBack);
+    const isPaused = Math.random()<0.15;
+    const s = {
+      id:uid('stu'), name:nextName(), type:'private', class:pick(DEMO_CLASSES), school:'',
+      subjects: shuffle(SUBJECT_DEFAULTS.filter(x=>x!=='Other')).slice(0,randInt(1,4)),
+      guardianName:'', guardianPhone:'', area:'', monthlyFee:randInt(3,20)*100,
+      joiningDate: shiftMonth(cur,-joinMonthsAgo)+'-'+String(randInt(1,25)).padStart(2,'0'),
+      active: !isPaused, notes:'', createdAt:new Date().toISOString(),
+      pausedPeriods: isPaused ? [{from: shiftMonth(cur,-randInt(0,1))+'-10', to:null}] : undefined
+    };
+    DB.students.push(s); students.push(s);
+  }
+
+  // Fee history: from each student's own joining month up to (not including)
+  // the current in-progress month — matches the app's own real invariant
+  // that a month never shows Due until it's actually over.
+  students.forEach(s=>{
+    if(s.isGroup || !s.monthlyFee) return;
+    let m = s.joiningDate.slice(0,7);
+    while(m < cur){
+      DB.fees.push({id:uid('fee'), studentId:s.id, month:m, monthlyFee:s.monthlyFee, paid:weightedFeeOutcome(s.monthlyFee), paymentDate: m+'-'+String(randInt(20,28)), method: pick(['Cash','bKash','Nagad']), notes:''});
+      m = shiftMonth(m,1);
     }
   });
 
-  // Safa Math class record — matches the spec's worked example exactly
-  DB.classRecords.push({
-    id:uid('rec'), studentId:safa.id, subject:'Math', date:todayISO(),
-    chapter:'Chapter 5', topic:'Exercise 5.2', page:'Q1–8',
-    completed:'Covered algebraic simplification methods with worked examples.',
-    homework:'Q9–12', homeworkDeadline:todayISO(), understanding:'Good', weakness:'Needs more practice on factorization',
-    nextTopic:'Q13–20', note:'', createdAt:new Date().toISOString()
+  // Light attendance history — roughly weekly, weighted toward Present.
+  students.filter(s=>!s.isGroup).forEach(s=>{
+    let m = s.joiningDate;
+    const weeks = Math.min(24, Math.floor((new Date(cur+'-01')-new Date(s.joiningDate.slice(0,7)+'-01'))/(1000*60*60*24*7)) + 1);
+    for(let w=0; w<Math.max(1,weeks); w++){
+      const d = addDaysISO(s.joiningDate, w*7);
+      if(d>todayISO()) break;
+      const r = Math.random();
+      const status = r<0.75?'Present':r<0.88?'Absent':r<0.96?'Late':'Cancelled';
+      DB.attendance.push({id:uid('att'), studentId:s.id, date:d, status});
+    }
   });
-  DB.homework.push({id:uid('hw'), studentId:safa.id, subject:'Math', homework:'Q9–12', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
-  DB.attendance.push({id:uid('att'), studentId:safa.id, date:todayISO(), status:'Present'});
-  DB.exams.push({id:uid('exam'), studentId:safa.id, name:'Weekly Test', subject:'Physics', chapter:'Ch 1-2', date:todayISO(), total:100, obtained:62, notes:''});
 
-  // Anika demo class record
-  DB.classRecords.push({
-    id:uid('rec'), studentId:anika.id, subject:'English', date:todayISO(),
-    chapter:'Unit 4', topic:'Reading comprehension', page:'p.32-33',
-    completed:'Read passage and discussed vocabulary.', homework:'Answer Q1-5',
-    homeworkDeadline:todayISO(), understanding:'Average', weakness:'', nextTopic:'Grammar: tenses', note:'', createdAt:new Date().toISOString()
+  // One class record + one homework per student, generic placeholders.
+  students.filter(s=>!s.isGroup).forEach(s=>{
+    const subj = pick(s.subjects.length?s.subjects:['Math']);
+    DB.classRecords.push({id:uid('rec'), studentId:s.id, subject:subj, date:todayISO(), chapter:`Chapter ${randInt(1,8)}`, topic:'Sample topic', page:`Q${randInt(1,10)}–${randInt(11,20)}`, completed:'Covered in class with worked examples.', homework:'Practice set', homeworkDeadline:addDaysISO(todayISO(),3), understanding:pick(['Good','Average','Needs work']), weakness:'', nextTopic:'Next chapter', note:'', createdAt:new Date().toISOString()});
+    if(Math.random()<0.5) DB.homework.push({id:uid('hw'), studentId:s.id, subject:subj, homework:'Practice set', givenDate:todayISO(), dueDate:addDaysISO(todayISO(),3), status:'Pending'});
   });
-  DB.homework.push({id:uid('hw'), studentId:anika.id, subject:'English', homework:'Answer Q1-5', givenDate:todayISO(), dueDate:todayISO(), status:'Pending'});
-  DB.attendance.push({id:uid('att'), studentId:anika.id, date:todayISO(), status:'Present'});
 
-  // A sample task
-  DB.tasks.push({id:uid('task'), title:'Prepare Class 9 Math worksheet', date:todayISO(), priority:'Medium', completed:false});
+  // A couple of exams — one completed with a score, one still scheduled.
+  const examSubjects = students.filter(s=>!s.isGroup).slice(0,3);
+  examSubjects.forEach(s=>{
+    const subj = pick(s.subjects.length?s.subjects:['Math']);
+    DB.exams.push({id:uid('exam'), studentId:s.id, name:'Weekly Test', subject:subj, chapter:`Ch ${randInt(1,4)}`, date:addDaysISO(todayISO(),-randInt(2,10)), total:100, obtained:randInt(45,95), notes:'', status:'Completed'});
+  });
+  if(examSubjects[0]) DB.exams.push({id:uid('exam'), studentId:examSubjects[0].id, name:'Monthly Exam', subject:pick(examSubjects[0].subjects), chapter:'', date:addDaysISO(todayISO(),randInt(3,14)), total:100, obtained:0, notes:'', status:'Scheduled'});
 
+  // A simple generic schedule — built fresh here, NOT the app's real default
+  // schedule (which has Asif's actual real teaching blocks/linkNames baked in).
+  DB.schedule = [
+    {id:uid('blk'), start:'16:00', end:'17:00', title:batchName, note:'Demo batch class', type:'batch', studentId:batch.id},
+    {id:uid('blk'), start:'17:15', end:'18:15', title:students[2]?students[2].name:'Student', note:'Private tuition', type:'private', studentId:students[2]?students[2].id:null},
+  ];
+
+  DB.tasks.push({id:uid('task'), title:'Prepare next week\'s worksheet', date:todayISO(), priority:'Medium', completed:false});
+
+  DB.settings.onboarded = true;
   saveDB();
 }
 

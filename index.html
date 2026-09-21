@@ -317,6 +317,7 @@ function defaultDB(){
     exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes,status:'Scheduled'|'Completed'}
     fees:[],          // {id,studentId,month,monthlyFee,paid,paymentDate,method,notes}
     tasks:[],         // {id,title,date,priority,completed,notes}
+    notes:[],         // {id,date,subject,category,done,createdAt} — general-purpose dated notes, e.g. lending/borrowing records, reminders
     syllabus:[],      // {id,studentId,subject,chapter,topic,status}
     studyPlan:[],
     prayerTimes:{},    // { 'YYYY-MM-DD': {location,maghrib,fetchedAt} }
@@ -828,7 +829,7 @@ function renderNav(){
   });
 }
 
-const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', study:'Study Plan', exams:'Exams', fees:'Fees', reports:'Reports', settings:'Settings', studentDetail:'Student'};
+const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', study:'Study Plan', exams:'Exams', fees:'Fees', reports:'Reports', settings:'Settings', studentDetail:'Student', notes:'Notes'};
 
 function render(){
   document.getElementById('pageHeading').textContent = PAGE_TITLES[ROUTE.page] || 'Teacher Planner';
@@ -852,6 +853,7 @@ function render(){
     case 'fees': view.innerHTML = renderFees(); bindFees(); break;
     case 'reports': view.innerHTML = renderReports(); bindReports(); break;
     case 'settings': view.innerHTML = renderSettings(); bindSettings(); break;
+    case 'notes': view.innerHTML = renderNotesPage(ROUTE.params.category||null, !!ROUTE.params.showDone); bindNotesPage(); break;
     default: view.innerHTML = '<div class="empty">Not found.</div>';
   }
 }
@@ -1289,13 +1291,130 @@ function renderDashboard(){
       </div>`).join('')}</div>`
       : `<div class="empty" style="padding:16px;">No tasks for today. <br><button class="btn sm" style="margin-top:8px;" data-nav-page="study">Add one</button></div>`}
   </div>
+
+  ${renderNotesCard()}
   `;
+}
+// Pending (not-done) notes, soonest date first. A note with no date sorts
+// last — it's a loose reminder rather than something tied to a specific day.
+function pendingNotes(){
+  return (DB.notes||[]).filter(n=>!n.done).sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
+}
+const NOTE_CATEGORIES = ['Lending','Reminder','Personal','Other'];
+function noteCategoryColor(cat){
+  return cat==='Lending'?'var(--amber)':cat==='Reminder'?'var(--err)':cat==='Personal'?'var(--ok)':'var(--ink-faint)';
+}
+function renderNotesCard(){
+  const pending = pendingNotes();
+  const shown = pending.slice(0,4);
+  return `
+  <div class="card">
+    <div class="card-title">Notes</div>
+    ${shown.length? `<div class="list">${shown.map(n=>`
+      <div class="item">
+        <div class="dot" style="background:${noteCategoryColor(n.category)}"></div>
+        <div class="body" style="cursor:pointer;" data-open-note="${n.id}"><div class="title">${escapeHTML(n.subject)}</div><div class="meta">${n.category}${n.date?' · '+readableDate(n.date):''}</div></div>
+        <button class="btn sm" data-toggle-note="${n.id}">Done</button>
+      </div>`).join('')}</div>`
+      : `<div class="empty" style="padding:16px;">No pending notes.</div>`}
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn sm" id="addNoteBtn">+ Add Note</button>
+      ${(DB.notes||[]).length ? `<button class="btn sm" data-nav-page="notes">See all</button>` : ''}
+    </div>
+  </div>`;
+}
+function bindNotesCard(){
+  const view = document.getElementById('view');
+  const addBtn = view.querySelector('#addNoteBtn');
+  if(addBtn) addBtn.addEventListener('click', ()=>openNoteForm());
+  view.querySelectorAll('[data-toggle-note]').forEach(el=>el.addEventListener('click',(ev)=>{
+    ev.stopPropagation();
+    const n = (DB.notes||[]).find(x=>x.id===el.dataset.toggleNote);
+    if(n){ n.done = true; saveDB(); render(); toast('Note marked done'); }
+  }));
+  view.querySelectorAll('[data-open-note]').forEach(el=>el.addEventListener('click',()=>{
+    openNoteForm(el.dataset.openNote);
+  }));
+}
+function openNoteForm(noteId){
+  const n = noteId ? (DB.notes||[]).find(x=>x.id===noteId) : null;
+  openModal(`
+    ${modalHead(n?'Edit Note':'Add Note')}
+    <div class="field"><label>Date</label><input type="date" id="nt_date" value="${n?n.date||'':todayISO()}"></div>
+    <div class="field"><label>Subject</label><input id="nt_subject" placeholder="e.g. Karim-ke 500 taka dilam" value="${n?escapeHTML(n.subject||''):''}"></div>
+    <div class="field"><label>Category</label>
+      <select id="nt_category">${NOTE_CATEGORIES.map(c=>`<option value="${c}" ${n&&n.category===c?'selected':''}>${c}</option>`).join('')}</select>
+    </div>
+    ${n? `<div class="field"><label><input type="checkbox" id="nt_done" ${n.done?'checked':''} style="width:auto;margin-right:6px;">Done</label></div>` : ''}
+    <div class="modal-actions" style="display:flex;gap:8px;">
+      <button class="btn primary block" id="nt_saveBtn">Save</button>
+      ${n? `<button class="btn danger block" id="nt_deleteBtn" style="max-width:100px;">Delete</button>` : ''}
+    </div>
+  `,{onMount:(root)=>{
+    root.querySelector('#nt_saveBtn').addEventListener('click',()=>{
+      const subject = root.querySelector('#nt_subject').value.trim();
+      if(!subject){ toast('Subject is required'); return; }
+      const date = root.querySelector('#nt_date').value || null;
+      const category = root.querySelector('#nt_category').value;
+      if(n){
+        n.date = date; n.subject = subject; n.category = category;
+        const doneEl = root.querySelector('#nt_done');
+        if(doneEl) n.done = doneEl.checked;
+      } else {
+        DB.notes = DB.notes||[];
+        DB.notes.push({id:uid('note'), date, subject, category, done:false, createdAt:new Date().toISOString()});
+      }
+      saveDB(); closeModal(); render(); toast('Note saved');
+    });
+    const delBtn = root.querySelector('#nt_deleteBtn');
+    if(delBtn) delBtn.addEventListener('click',()=>{
+      if(confirm('Delete this note?')){
+        DB.notes = (DB.notes||[]).filter(x=>x.id!==n.id);
+        saveDB(); closeModal(); render(); toast('Note deleted');
+      }
+    });
+  }});
+}
+function renderNotesPage(filterCategory, showDone){
+  const all = DB.notes||[];
+  let list = all.filter(n=> (showDone || !n.done) && (!filterCategory || n.category===filterCategory));
+  list = list.sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
+  return `
+  <div class="field" style="display:flex;gap:8px;">
+    <select id="notesFilterCategory" style="flex:1;">
+      <option value="">All categories</option>
+      ${NOTE_CATEGORIES.map(c=>`<option value="${c}" ${filterCategory===c?'selected':''}>${c}</option>`).join('')}
+    </select>
+  </div>
+  <div class="field"><label><input type="checkbox" id="notesShowDone" ${showDone?'checked':''} style="width:auto;margin-right:6px;">Show done notes too</label></div>
+  <button class="btn primary block" id="addNoteBtn2" style="margin-bottom:10px;">+ Add Note</button>
+  ${list.length===0? `<div class="empty">No notes${filterCategory?' in '+filterCategory:''}.</div>` : `
+  <div class="list">
+  ${list.map(n=>`
+    <div class="item" data-open-note="${n.id}" style="cursor:pointer;${n.done?'opacity:0.55;':''}">
+      <div class="dot" style="background:${noteCategoryColor(n.category)}"></div>
+      <div class="body"><div class="title">${escapeHTML(n.subject)}${n.done?' ✓':''}</div><div class="meta">${n.category}${n.date?' · '+readableDate(n.date):''}</div></div>
+      <div class="chev">›</div>
+    </div>`).join('')}
+  </div>`}
+  `;
+}
+function bindNotesPage(){
+  const view = document.getElementById('view');
+  view.querySelector('#addNoteBtn2').addEventListener('click', ()=>openNoteForm());
+  view.querySelectorAll('[data-open-note]').forEach(el=>el.addEventListener('click',()=>openNoteForm(el.dataset.openNote)));
+  const catSel = view.querySelector('#notesFilterCategory');
+  const doneChk = view.querySelector('#notesShowDone');
+  const refresh = ()=>{ ROUTE.params = {category: catSel.value||null, showDone: doneChk.checked}; render(); };
+  catSel.addEventListener('change', refresh);
+  doneChk.addEventListener('change', refresh);
 }
 let dashboardMaghribCache = null;
 // Guards which date we've already fetched/are fetching for, so re-rendering the
 // dashboard (e.g. from the fetch's own completion) never re-triggers the fetch.
 let dashboardMaghribFetchedFor = null;
 function bindDashboard(){
+  bindNotesCard();
   const iso = todayISO();
   if(dashboardMaghribFetchedFor !== iso){
     dashboardMaghribFetchedFor = iso; // mark as in-flight BEFORE awaiting, to block duplicate triggers
@@ -1532,7 +1651,8 @@ function bindToday(){
     if(off){ off.makeupDone = true; saveDB(); render(); toast('Makeup marked done'); }
   }));
   view.querySelectorAll('[data-start-session]').forEach(el=>{
-    el.addEventListener('click', ()=>{
+    el.addEventListener('click', (ev)=>{
+      ev.stopPropagation(); // this button sits inside a clickable schedule row (data-open-student) — without this, logging a session also fires the row's own click and jumps to the student's page
       const [scheduledStart, title] = el.dataset.startSession.split('|');
       const existing = sessionLogFor(todayISOState, scheduledStart);
       if(existing && existing.actualStart){
@@ -1543,7 +1663,8 @@ function bindToday(){
     });
   });
   view.querySelectorAll('[data-end-session]').forEach(el=>{
-    el.addEventListener('click', ()=>{
+    el.addEventListener('click', (ev)=>{
+      ev.stopPropagation(); // same reason as data-start-session above
       const [scheduledStart, title] = el.dataset.endSession.split('|');
       const existing = sessionLogFor(todayISOState, scheduledStart);
       if(existing && existing.actualEnd){

@@ -672,6 +672,19 @@ function daysSinceLastBackup(){
   return Math.floor(diffMs / (1000*60*60*24));
 }
 
+// Same idea, but for the Sheets AUTO-backup specifically — this is the one
+// that can fail completely silently (network hiccup, a bad deployment, a
+// quota issue) with nothing more than an easy-to-miss toast at the moment
+// of failure. A stale lastSheetsBackupAt is the only reliable trailing
+// signal that it's actually stopped working, so it gets its own days-old
+// check and its own (more urgent, shorter-fuse) Dashboard warning.
+const SHEETS_BACKUP_STALE_DAYS = 2;
+function daysSinceLastSheetsBackup(){
+  if(!DB.settings.lastSheetsBackupAt) return Infinity;
+  const diffMs = Date.now() - new Date(DB.settings.lastSheetsBackupAt).getTime();
+  return Math.floor(diffMs / (1000*60*60*24));
+}
+
 /* =========================================================================
    GOOGLE SHEETS BACKUP — push-only from the app (auto + manual). Restore is
    on-demand, gated only by a local confirm() before overwriting data. The
@@ -1208,12 +1221,21 @@ function renderDashboard(){
 
   const tasksToday = DB.tasks.filter(t=>t.date===iso && !t.completed).slice(0,5);
   const backupDue = DB.students.length>0 && daysSinceLastBackup()>=BACKUP_REMINDER_DAYS;
+  const sheetsBackupStale = !DEMO_MODE && DB.settings.sheetsWebAppUrl && DB.settings.sheetsAutoBackup && daysSinceLastSheetsBackup()>=SHEETS_BACKUP_STALE_DAYS;
   const awaitingResults = awaitingResultsExams();
   const todayPersonalOffs = personalOffsForDate(iso);
   const makeupsPending = pendingMakeups();
 
   return `
   <div class="page-sub">${readableDate(iso)} · ${DB.settings.location}</div>
+
+  ${sheetsBackupStale? `
+  <div class="card" style="border-color:var(--err);cursor:pointer;" data-nav-page="settings">
+    <div class="row">
+      <div style="font-size:13px;"><b>⚠ Google Sheets backup hasn't succeeded in ${daysSinceLastSheetsBackup()===Infinity?'a while':daysSinceLastSheetsBackup()+' days'}</b><br><span class="page-sub" style="margin:2px 0 0;">Auto-backup is on but isn't reaching your Sheet — tap to check Settings and try "Backup Now"</span></div>
+      <div class="chev">›</div>
+    </div>
+  </div>` : ''}
 
   ${backupDue? `
   <div class="card" style="border-color:rgba(224,164,88,0.4);cursor:pointer;" data-nav-page="settings">
@@ -2317,11 +2339,24 @@ function studentExamsTab(s){
   `;
 }
 
+// How many extra future months beyond the base window (monthsWindow's
+// default +2) the person has asked to see, per student — resets naturally
+// since it's only ever set when they tap "Show more months ahead" on THAT
+// student's Fees tab; opening a different student starts fresh at 0.
+let feesTabExtraFuture = {};
 function studentFeesTab(s){
-  const months = monthsWindow(6,2); // 2 months ahead (for advance) + current + 6 back
+  const extra = feesTabExtraFuture[s.id]||0;
+  const windowMonths = monthsWindow(6, 2+extra);
+  // A month can have an actual fee record (e.g. an advance payment recorded
+  // via "+ Record Payment" for a month further out than the base window)
+  // even when it falls outside the window above — always show those too, so
+  // recording something for a later month never makes it invisible.
+  const recordedMonths = (DB.fees||[]).filter(f=>f.studentId===s.id).map(f=>f.month);
+  const months = Array.from(new Set([...windowMonths, ...recordedMonths])).sort((a,b)=>b.localeCompare(a));
   return `
   <div class="card"><div class="card-title">Monthly Fee</div><div style="font-family:'Fraunces',serif;font-size:24px;">${fmtMoney(s.monthlyFee||0)}</div></div>
   <button class="btn primary block" data-record-payment="${s.id}" style="margin-bottom:12px;">+ Record Payment</button>
+  <div class="hint" style="margin:-4px 0 10px;">Recording a payment works for ANY month, including ones not listed below yet — pick the month in that form directly.</div>
   <div class="list">
   ${months.map(m=>{
     const f = feeStatusFor(s,m);
@@ -2339,6 +2374,7 @@ function studentFeesTab(s){
     </div>`;
   }).join('')}
   </div>
+  <button class="btn block" data-show-more-fee-months="${s.id}" style="margin-top:4px;">Show more months ahead</button>
   `;
 }
 function feeBadgeClass(status){ return status==='Paid'?'ok':status==='Advance'?'ok':status==='Partial'?'warn':'err'; }
@@ -2431,6 +2467,11 @@ function bindStudentDetail(id){
     saveDB(); render(); toast('Marked as fully paid');
   }));
   const rp = view.querySelector('[data-record-payment]'); if(rp) rp.addEventListener('click',()=>openPaymentForm(id));
+  const smf = view.querySelector('[data-show-more-fee-months]');
+  if(smf) smf.addEventListener('click',()=>{
+    feesTabExtraFuture[id] = (feesTabExtraFuture[id]||0) + 3;
+    render();
+  });
   view.querySelectorAll('[data-edit-fee]').forEach(el=>el.addEventListener('click',()=>{
     const [sid,month] = el.dataset.editFee.split('|');
     openFeeEditForm(sid, month);

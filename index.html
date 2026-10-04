@@ -221,6 +221,89 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 @media (min-width:640px){
   .bottomnav{max-width:560px;left:50%;transform:translateX(-50%);border-radius:16px 16px 0 0;border-left:1px solid var(--line);border-right:1px solid var(--line);}
 }
+
+/* =========================================================================
+   DESKTOP LAYOUT (>=900px). Everything below is gated behind this media
+   query, so phone/tablet rendering is untouched. Bottom nav becomes a left
+   sidebar, content widens, dashboard/settings/reports flow into columns,
+   plain lists become grids, modals centre, scrollbars + hover + focus appear.
+   ========================================================================= */
+@media (min-width:900px){
+  :root{--side-w:232px;}
+  body{--main-w:1000px;padding-bottom:0;padding-left:var(--side-w);}
+  body[data-page="dashboard"],body[data-page="settings"],body[data-page="reports"]{--main-w:1360px;}
+
+  .topbar{padding:18px max(32px, calc((100% - (var(--main-w) - 64px)) / 2)) 14px;}
+  main{max-width:var(--main-w);padding:24px 32px 48px;}
+
+  /* sidebar */
+  .bottomnav{
+    top:0;bottom:0;left:0;right:auto;width:var(--side-w);max-width:none;transform:none;
+    flex-direction:column;justify-content:flex-start;gap:4px;padding:20px 12px;
+    border-top:none;border-left:none;border-right:1px solid var(--line);border-radius:0;
+    background:var(--bg2);overflow-y:auto;
+  }
+  .navbtn{flex:none;flex-direction:row;justify-content:flex-start;gap:12px;padding:11px 14px;font-size:14px;letter-spacing:0;border-radius:10px;}
+  .navbtn .ic{font-size:18px;width:24px;text-align:center;}
+  .navbtn.active{background:var(--card2);}
+
+  /* card-stack pages flow into columns (masonry-style; heights vary a lot) */
+  body[data-page="dashboard"] main,
+  body[data-page="settings"] main,
+  body[data-page="reports"] main{column-width:400px;column-gap:20px;}
+  body[data-page="dashboard"] main > :not(.card),
+  body[data-page="settings"] main > :not(.card),
+  body[data-page="reports"] main > :not(.card){column-span:all;}
+  body[data-page="dashboard"] .card,
+  body[data-page="settings"] .card,
+  body[data-page="reports"] .card{break-inside:avoid;}
+
+  /* plain top-level lists become responsive grids */
+  main > .list{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:12px;}
+  .tabs{flex-wrap:wrap;overflow:visible;}
+  main > .btn.block{width:auto;min-width:260px;padding-left:28px;padding-right:28px;}
+
+  /* modals: centred dialogs, not bottom sheets */
+  .modal-backdrop{align-items:center;padding:32px;}
+  .modal-sheet{border-radius:16px;border-bottom:1px solid var(--line);max-width:640px;max-height:calc(100vh - 64px);padding:22px 24px;box-shadow:0 24px 64px rgba(0,0,0,0.5);}
+  .modal-sheet.center{max-width:440px;}
+  .toast{bottom:28px;left:calc(50% + var(--side-w) / 2);}
+
+  /* visible, thin scrollbars (mobile hides them entirely above) */
+  ::-webkit-scrollbar{width:10px;height:10px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px;border:2px solid var(--bg);}
+  ::-webkit-scrollbar-thumb:hover{background:var(--ink-faint);}
+
+  :focus-visible{outline:2px solid var(--amber);outline-offset:2px;}
+}
+@media (min-width:900px) and (hover:hover){
+  .btn:hover{background:var(--line2);}
+  .btn.primary:hover{background:var(--amber-soft);}
+  .btn.ghost:hover,.btn.danger:hover{background:var(--card2);}
+  .icon-btn:hover,.tab:hover,.chip:hover{border-color:var(--amber);color:var(--ink);}
+  .tab.active:hover{color:#1a1206;}
+  .navbtn:hover{background:var(--card2);color:var(--ink);}
+  .navbtn.active:hover{color:var(--amber-soft);}
+  .item[style*="cursor:pointer"]:hover,.sr-item:hover{border-color:var(--line2);background:var(--card);}
+  .modal-close:hover{border-color:var(--amber);}
+}
+
+/* ---------- Money section ---------- */
+.money-cols{display:block;}
+.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;max-width:360px;}
+.keypad .btn{padding:14px 0;font-size:17px;}
+.calc-out{font-family:'Fraunces',serif;font-size:26px;min-height:36px;margin:4px 0 0;color:var(--amber-soft);word-break:break-all;}
+@media (max-width:899px){
+  .navbtn{min-width:0;font-size:9px;letter-spacing:0;padding:6px 0;}
+}
+@media (max-width:420px){
+  .navbtn{font-size:8.5px;}
+  .navbtn .ic{font-size:16px;}
+}
+@media (min-width:900px){
+  .money-cols{display:grid;grid-template-columns:minmax(320px,400px) 1fr;gap:20px;align-items:start;}
+}
 </style>
 </head>
 <body>
@@ -256,7 +339,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-08-23.1';
+const APP_BUILD = '2026-10-04.1';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -302,6 +385,8 @@ function defaultDB(){
       // salary impact, no makeup tracking — it's just a normal non-teaching day.
       weeklyOffDay:null,
       monthlySalary:0,
+      // Money section budgets (0 = no budget)
+      monthlyBudgetPersonal:0, monthlyBudgetBusiness:0,
       // Google Sheets backup (push-only from the app; restore is on-demand/manual).
       sheetsWebAppUrl:'', sheetsAutoBackup:false, lastSheetsBackupAt:null,
       // PIN confirmation gate for Export/Import/Restore — protects against
@@ -317,6 +402,7 @@ function defaultDB(){
     exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes,status:'Scheduled'|'Completed'}
     fees:[],          // {id,studentId,month,monthlyFee,paid,paymentDate,method,notes}
     tasks:[],         // {id,title,date,priority,completed,notes}
+    expenses:[],      // {id,date,amount,kind:'personal'|'business',category,note,createdAt} — Money section
     notes:[],         // {id,date,subject,category,done,createdAt} — general-purpose dated notes, e.g. lending/borrowing records, reminders
     syllabus:[],      // {id,studentId,subject,chapter,topic,status}
     studyPlan:[],
@@ -374,6 +460,7 @@ function mergeIntoDefaults(parsed){
       if(match) blk.studentId = match.id;
     }
   });
+  if(!Array.isArray(merged.expenses)) merged.expenses = []; // backups from before the Money section
   if(!merged.settings.maghribStudentId){
     const safa = (merged.students||[]).find(s=>s.name==='Safa');
     if(safa) merged.settings.maghribStudentId = safa.id;
@@ -820,6 +907,7 @@ const NAV_ITEMS = [
   {id:'study', label:'Study', icon:'📘'},
   {id:'exams', label:'Exams', icon:'📝'},
   {id:'fees', label:'Fees', icon:'৳'},
+  {id:'money', label:'Money', icon:'💰'},
   {id:'reports', label:'Reports', icon:'📊'},
 ];
 let ROUTE = {page:'dashboard', params:{}};
@@ -842,9 +930,462 @@ function renderNav(){
   });
 }
 
-const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', study:'Study Plan', exams:'Exams', fees:'Fees', reports:'Reports', settings:'Settings', studentDetail:'Student', notes:'Notes'};
+const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', study:'Study Plan', exams:'Exams', fees:'Fees', money:'Money', reports:'Reports', settings:'Settings', studentDetail:'Student', notes:'Notes'};
+
+/* =========================================================================
+   MONEY — day-to-day expense log, monthly summary, calculator.
+   Data: DB.expenses = [{id,date,amount,kind:'personal'|'business',category,note,createdAt}]
+   Budgets: DB.settings.monthlyBudgetPersonal / monthlyBudgetBusiness (0 = none)
+   ========================================================================= */
+const EXPENSE_KINDS = {personal:'Personal', business:'Teaching'};
+const EXPENSE_CATEGORIES = {
+  personal:['Food','Transport','Household','Family','Health','Mobile & Internet','Other'],
+  business:['Books & Stationery','Printing','Internet & Data','Transport','Teaching Supplies','Other']
+};
+let moneyTab = 'log';                 // 'log' | 'month' | 'calc'
+let moneyKind = 'personal';           // type chosen in the quick-add form
+let moneyLastCat = {personal:null, business:null};
+let moneyMonth = null;                // Month tab override, 'YYYY-MM'
+let moneyFilter = 'all';              // Month tab: 'all' | 'personal' | 'business'
+// Typed-but-unsaved form text lives here, NOT only in the DOM, so any re-render
+// (category tap, tab switch) can't wipe it. See also moneyIsEditing() below.
+let moneyDraft = {amount:'', note:'', date:''};
+let calcExpr = '';
+let calcHistory = [];                 // session only, newest first: {expr,value}
+
+/* ---------- safe expression parser (no eval / Function) ---------- */
+function safeCalc(src){
+  let s = String(src==null?'':src)
+    .replace(/[০-৯]/g, d=>'০১২৩৪৫৬৭৮৯'.indexOf(d))
+    .replace(/×/g,'*').replace(/÷/g,'/').replace(/[−–—]/g,'-')
+    .replace(/[,\s৳]/g,'');
+  if(!s) return {ok:false, error:''};
+  if(s.length>200) return {ok:false, error:'Too long'};
+  const toks = [];
+  let i = 0;
+  while(i<s.length){
+    const m = /^(?:\d+\.?\d*|\.\d+)/.exec(s.slice(i));
+    if(m){ toks.push({n:parseFloat(m[0])}); i += m[0].length; continue; }
+    const c = s[i];
+    if('+-*/()%'.indexOf(c)>=0){ toks.push({o:c}); i++; continue; }
+    return {ok:false, error:'Unexpected "'+c+'"'};
+  }
+  let p = 0;
+  const isOp = o => p<toks.length && toks[p].o===o;
+  function expr(){
+    let l = term();
+    while(isOp('+')||isOp('-')){
+      const op = toks[p++].o, r = term();
+      const rv = r.pct ? l.v*r.v : r.v;           // "200+10%" → 220
+      l = {v: op==='+' ? l.v+rv : l.v-rv};
+    }
+    return l;
+  }
+  function term(){
+    let l = factor();
+    while(isOp('*')||isOp('/')){
+      const op = toks[p++].o, r = factor();
+      if(op==='/' && r.v===0) throw new Error('Divide by zero');
+      l = {v: op==='*' ? l.v*r.v : l.v/r.v};
+    }
+    return l;
+  }
+  function factor(){
+    const t = toks[p];
+    if(!t) throw new Error('Incomplete');
+    let r;
+    if(t.o==='-'){ p++; return {v:-factor().v}; }
+    if(t.o==='+'){ p++; return factor(); }
+    if(t.o==='('){
+      p++; r = {v:expr().v};
+      if(!isOp(')')) throw new Error('Missing )');
+      p++;
+    } else if(t.n!==undefined){
+      p++; r = {v:t.n};
+    } else {
+      throw new Error('Unexpected "'+t.o+'"');
+    }
+    if(isOp('%')){ p++; r = {v:r.v/100, pct:true}; }
+    return r;
+  }
+  try{
+    const r = expr();
+    if(p<toks.length) throw new Error('Unexpected "'+(toks[p].o||toks[p].n)+'"');
+    if(!isFinite(r.v)) throw new Error('Not a number');
+    return {ok:true, value:parseFloat(r.v.toPrecision(12))};
+  }catch(e){
+    return {ok:false, error:e.message};
+  }
+}
+
+/* ---------- small helpers ---------- */
+function round2(n){ return Math.round(n*100)/100; }
+function edate(e){ return (e && typeof e.date==='string') ? e.date : ''; }
+function kindOf(e){ return e && e.kind==='business' ? 'business' : 'personal'; }
+function expensesFor(ym, kind){
+  return (DB.expenses||[]).filter(e=>edate(e).slice(0,7)===ym && (!kind || kind==='all' || kindOf(e)===kind));
+}
+function sumAmt(list){ return round2(list.reduce((a,e)=>a+(Number(e.amount)||0),0)); }
+function daysInMonthYM(ym){ const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
+// Fees actually received in a month, by payment date (not by the month the fee is for).
+function feesReceivedIn(ym){
+  return (DB.fees||[]).filter(f=>f.paymentDate && String(f.paymentDate).slice(0,7)===ym)
+    .reduce((a,f)=>a+(Number(f.paid)||0),0);
+}
+function expDayLabel(iso){
+  const t = todayISO();
+  if(iso===t) return 'Today';
+  if(iso===addDaysISO(t,-1)) return 'Yesterday';
+  return new Date(iso+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+}
+function fmtNum(n){ return Number(n).toLocaleString('en-IN',{maximumFractionDigits:6}); }
+function budgetFor(kind){
+  const v = Number(kind==='business' ? DB.settings.monthlyBudgetBusiness : DB.settings.monthlyBudgetPersonal);
+  return isFinite(v) && v>0 ? v : 0;
+}
+function moneyCategoryFor(kind){
+  const cats = EXPENSE_CATEGORIES[kind];
+  return cats.indexOf(moneyLastCat[kind])>=0 ? moneyLastCat[kind] : cats[0];
+}
+// True while the person is mid-typing on the Money page. The 60-second auto-refresh
+// (refreshTick) must not rebuild the page then, or it would wipe what they typed.
+function moneyIsEditing(){
+  if(ROUTE.page!=='money') return false;
+  const a = document.activeElement;
+  if(a && a.closest && a.closest('#view') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+  return !!(moneyDraft.amount || moneyDraft.note || calcExpr);
+}
+
+function expenseItemHTML(e, showDate){
+  const note = (e.note||'').trim();
+  const d = showDate && edate(e) ? new Date(edate(e)+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · ' : '';
+  return `<div class="item" style="cursor:pointer;" data-exp-edit="${escapeHTML(e.id)}">
+    <div class="dot" style="background:${kindOf(e)==='business'?'var(--teal)':'var(--amber)'}"></div>
+    <div class="body"><div class="title">${escapeHTML(e.category||'Other')}</div><div class="meta">${d}${EXPENSE_KINDS[kindOf(e)]}${note?' · '+escapeHTML(note):''}</div></div>
+    <div style="font-weight:700;white-space:nowrap;">${fmtMoney(e.amount)}</div>
+  </div>`;
+}
+
+/* ---------- page shell ---------- */
+function renderMoney(){
+  const tabs = [['log','Log'],['month','Month'],['calc','Calculator']];
+  const body = moneyTab==='month' ? moneyMonthHTML() : moneyTab==='calc' ? moneyCalcHTML() : moneyLogHTML();
+  return `<div class="tabs">${tabs.map(t=>`<button class="tab ${moneyTab===t[0]?'active':''}" data-money-tab="${t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
+}
+
+/* ---------- Log tab ---------- */
+function moneyLogHTML(){
+  const today = todayISO();
+  const cats = EXPENSE_CATEGORIES[moneyKind];
+  const cat = moneyCategoryFor(moneyKind);
+  const since = addDaysISO(today,-6);
+  const recent = (DB.expenses||[]).filter(e=>/^\d{4}-\d{2}-\d{2}$/.test(edate(e)) && edate(e)>=since)
+    .sort((a,b)=> edate(b).localeCompare(edate(a)) || String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  const groups = {};
+  recent.forEach(e=>{ (groups[edate(e)] = groups[edate(e)] || []).push(e); });
+  const days = Object.keys(groups).sort().reverse();
+  const todayTotal = sumAmt(recent.filter(e=>edate(e)===today));
+  const weekTotal = sumAmt(recent.filter(e=>edate(e)<=today));
+  return `
+  <div class="money-cols">
+    <div class="card">
+      <div class="card-title">Add expense</div>
+      <div class="chip-select" style="margin-bottom:14px;">
+        ${Object.keys(EXPENSE_KINDS).map(k=>`<button type="button" class="chip ${moneyKind===k?'on':''}" data-money-kind="${k}">${EXPENSE_KINDS[k]}</button>`).join('')}
+      </div>
+      <div class="field">
+        <label>Amount (৳) — you can type things like 120+50</label>
+        <input id="mAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${escapeHTML(moneyDraft.amount)}">
+        <div class="hint" id="mHint"></div>
+      </div>
+      <div class="field">
+        <label>Category</label>
+        <div class="chip-select">
+          ${cats.map(c=>`<button type="button" class="chip ${c===cat?'on':''}" data-money-cat="${escapeHTML(c)}">${escapeHTML(c)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="field"><label>Note (optional)</label><input id="mNote" type="text" maxlength="120" autocomplete="off" value="${escapeHTML(moneyDraft.note)}"></div>
+      <div class="field"><label>Date</label><input id="mDate" type="date" value="${escapeHTML(moneyDraft.date||today)}"></div>
+      <button class="btn primary block" id="mAdd">Add expense</button>
+    </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:6px;"><div class="card-title" style="margin:0;">Last 7 days</div><div style="font-size:13px;color:var(--ink-faint);">Today ${fmtMoney(todayTotal)} · Week ${fmtMoney(weekTotal)}</div></div>
+      ${days.length===0 ? `<div class="empty">Nothing logged yet. Add your first expense.</div>` : days.map(d=>`
+        <div class="row" style="margin:14px 0 6px;"><span class="sub-heading" style="margin:0;">${expDayLabel(d)}</span><span style="font-size:13px;font-weight:700;">${fmtMoney(sumAmt(groups[d]))}</span></div>
+        <div class="list">${groups[d].map(e=>expenseItemHTML(e,false)).join('')}</div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function moneyHintUpdate(){
+  const h = document.getElementById('mHint'); if(!h) return;
+  const r = safeCalc(moneyDraft.amount);
+  const plain = /^[\d.,\s]*$/.test(moneyDraft.amount||'');
+  h.textContent = (r.ok && !plain) ? '= '+fmtMoney(r.value) : '';
+}
+
+function addExpenseFromForm(){
+  const r = safeCalc(moneyDraft.amount);
+  if(!r.ok || !(r.value>0) || r.value>1e9){
+    toast('Enter a valid amount');
+    const a = document.getElementById('mAmount'); if(a) a.focus();
+    return;
+  }
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(moneyDraft.date||'') ? moneyDraft.date : todayISO();
+  const cat = moneyCategoryFor(moneyKind);
+  const value = round2(r.value);
+  DB.expenses.push({
+    id:uid('exp'), date, amount:value, kind:moneyKind, category:cat,
+    note:(moneyDraft.note||'').trim().slice(0,120), createdAt:new Date().toISOString()
+  });
+  saveDB();
+  moneyDraft = {amount:'', note:'', date:moneyDraft.date};
+  toast(date===todayISO() ? `Added ${fmtMoney(value)} · ${cat}` : `Added ${fmtMoney(value)} · ${cat} on ${date}`);
+  render();
+  if(window.matchMedia && matchMedia('(pointer:fine)').matches){
+    const a = document.getElementById('mAmount'); if(a) a.focus();   // fast repeat entry on PC only
+  }
+}
+
+function openExpenseEdit(id){
+  const e = (DB.expenses||[]).find(x=>x.id===id);
+  if(!e) return;
+  let kind = kindOf(e);
+  openModal(`
+    ${modalHead('Edit expense')}
+    <div class="chip-select" id="eKinds" style="margin-bottom:14px;">
+      ${Object.keys(EXPENSE_KINDS).map(k=>`<button type="button" class="chip ${kind===k?'on':''}" data-ekind="${k}">${EXPENSE_KINDS[k]}</button>`).join('')}
+    </div>
+    <div class="field"><label>Amount (৳)</label><input id="eAmount" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(e.amount))}"></div>
+    <div class="field"><label>Category</label><select id="eCat"></select></div>
+    <div class="field"><label>Note</label><input id="eNote" type="text" maxlength="120" value="${escapeHTML(e.note||'')}"></div>
+    <div class="field"><label>Date</label><input id="eDate" type="date" value="${escapeHTML(edate(e))}"></div>
+    <div class="modal-actions"><button class="btn danger" id="eDel">Delete</button><button class="btn primary" id="eSave">Save</button></div>
+  `, {onMount: root=>{
+    const sel = root.querySelector('#eCat');
+    function fillCats(current){
+      const list = EXPENSE_CATEGORIES[kind].slice();
+      if(current && list.indexOf(current)<0) list.unshift(current);   // keep an unknown/old category selectable
+      sel.innerHTML = list.map(c=>`<option value="${escapeHTML(c)}" ${c===current?'selected':''}>${escapeHTML(c)}</option>`).join('');
+    }
+    fillCats(e.category);
+    root.querySelectorAll('[data-ekind]').forEach(b=>b.addEventListener('click',()=>{
+      kind = b.dataset.ekind;
+      root.querySelectorAll('[data-ekind]').forEach(x=>x.classList.toggle('on', x.dataset.ekind===kind));
+      fillCats(null);
+    }));
+    root.querySelector('#eSave').addEventListener('click',()=>{
+      const r = safeCalc(root.querySelector('#eAmount').value);
+      if(!r.ok || !(r.value>0) || r.value>1e9){ toast('Enter a valid amount'); return; }
+      const d = root.querySelector('#eDate').value;
+      e.amount = round2(r.value);
+      e.kind = kind;
+      e.category = sel.value;
+      e.note = root.querySelector('#eNote').value.trim().slice(0,120);
+      if(/^\d{4}-\d{2}-\d{2}$/.test(d)) e.date = d;
+      saveDB(); closeModal(); toast('Saved'); render();
+    });
+    root.querySelector('#eDel').addEventListener('click',()=>{
+      if(!confirm('Delete this expense?')) return;
+      DB.expenses = DB.expenses.filter(x=>x.id!==id);
+      saveDB(); closeModal(); toast('Deleted'); render();
+    });
+  }});
+}
+
+/* ---------- Month tab ---------- */
+function moneyMonthHTML(){
+  const cur = todayISO().slice(0,7);
+  const ym = moneyMonth || cur;
+  const f = moneyFilter;
+  const list = expensesFor(ym,f);
+  const total = sumAmt(list);
+  const isCur = ym===cur;
+  const dim = daysInMonthYM(ym);
+  const elapsed = ym<cur ? dim : (isCur ? Number(todayISO().slice(8,10)) : 0);
+  const avg = elapsed>0 ? total/elapsed : 0;
+  const projected = isCur && total>0 ? avg*dim : null;
+  // Compare like with like: a half-finished month vs last month's same days.
+  const prev = shiftMonth(ym,-1);
+  let prevList = expensesFor(prev,f);
+  if(isCur) prevList = prevList.filter(e=>Number(edate(e).slice(8,10))<=elapsed);
+  const prevTotal = sumAmt(prevList);
+  let vsHtml = '—', vsLbl = 'vs last month';
+  if(prevTotal>0){
+    const diff = total-prevTotal, pct = Math.round(Math.abs(diff)/prevTotal*100);
+    vsHtml = `${diff>0?'▲':diff<0?'▼':''} ${pct}%`;
+    vsLbl = `${isCur?'vs same days of':'vs'} ${monthLabel(prev)} (${fmtMoney(prevTotal)})`;
+  } else if(total>0){ vsLbl = 'nothing recorded last month'; }
+  // categories
+  const byCat = {};
+  list.forEach(e=>{ const c=e.category||'Other'; byCat[c]=round2((byCat[c]||0)+(Number(e.amount)||0)); });
+  const cats = Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]);
+  const maxCat = cats.length ? byCat[cats[0]] : 0;
+  // cash line (all kinds, regardless of filter)
+  const allSpent = sumAmt(expensesFor(ym,'all'));
+  const feesIn = feesReceivedIn(ym);
+  const left = feesIn-allSpent;
+  // budgets
+  const budgetRows = ['personal','business'].filter(k=>budgetFor(k)>0).map(k=>{
+    const spent = sumAmt(expensesFor(ym,k)), b = budgetFor(k), pct = Math.min(100,Math.round(spent/b*100));
+    const over = spent>b;
+    return `<div style="margin-bottom:12px;">
+      <div class="row"><span>${EXPENSE_KINDS[k]}</span><span><b>${fmtMoney(spent)}</b> of ${fmtMoney(b)}</span></div>
+      <div class="progress-bar"><div style="width:${pct}%;${over?'background:var(--err);':''}"></div></div>
+      <div class="hint" style="${over?'color:var(--err);':''}">${over?`Over by ${fmtMoney(round2(spent-b))}`:`${fmtMoney(round2(b-spent))} left`}</div>
+    </div>`;
+  }).join('');
+  const entries = list.slice().sort((a,b)=> edate(b).localeCompare(edate(a)) || String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,100);
+  return `
+  <div class="field" style="margin-bottom:10px;"><input type="month" id="mMonth" value="${ym}"></div>
+  <div class="chip-select" style="margin-bottom:14px;">
+    ${[['all','All'],['personal','Personal'],['business','Teaching']].map(x=>`<button type="button" class="chip ${f===x[0]?'on':''}" data-money-filter="${x[0]}">${x[1]}</button>`).join('')}
+  </div>
+  <div class="card">
+    <div class="grid2">
+      <div class="stat hot"><div class="num">${fmtMoney(total)}</div><div class="lbl">Spent in ${monthLabel(ym)}</div></div>
+      <div class="stat"><div class="num">${fmtMoney(Math.round(avg))}</div><div class="lbl">Average per day</div></div>
+      <div class="stat"><div class="num">${projected===null?'—':fmtMoney(Math.round(projected))}</div><div class="lbl">${projected===null?'Month-end projection (current month only)':'Projected by month end'}</div></div>
+      <div class="stat"><div class="num">${vsHtml}</div><div class="lbl">${escapeHTML(vsLbl)}</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">Budget</div><button class="btn sm" id="mBudgetBtn">Set budget</button></div>
+    ${budgetRows || `<div class="hint">No monthly budget set.</div>`}
+  </div>
+  <div class="card">
+    <div class="card-title">By category</div>
+    ${cats.length===0 ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : cats.map(c=>`
+      <div style="margin-bottom:12px;">
+        <div class="row"><span>${escapeHTML(c)}</span><span><b>${fmtMoney(byCat[c])}</b> · ${total>0?Math.round(byCat[c]/total*100):0}%</span></div>
+        <div class="progress-bar"><div style="width:${maxCat>0?Math.round(byCat[c]/maxCat*100):0}%"></div></div>
+      </div>`).join('')}
+  </div>
+  ${feesIn>0 ? `<div class="card">
+    <div class="card-title">Cash check — ${monthLabel(ym)}</div>
+    <div class="two-col-item"><span>Fees received</span><b>${fmtMoney(feesIn)}</b></div>
+    <div class="two-col-item"><span>Spent (personal + teaching)</span><b>${fmtMoney(allSpent)}</b></div>
+    <div class="two-col-item"><span>Left</span><b style="color:${left<0?'var(--err)':'var(--ok)'};">${left<0?'−':''}${fmtMoney(Math.abs(round2(left)))}</b></div>
+    <div class="hint" style="margin-top:6px;">Fees counted by the date they were paid. Salary and other income aren't included.</div>
+  </div>` : ''}
+  ${entries.length ? `<div class="card"><div class="card-title">Entries</div><div class="list">${entries.map(e=>expenseItemHTML(e,true)).join('')}</div></div>` : ''}`;
+}
+
+function openBudgetModal(){
+  openModal(`
+    ${modalHead('Monthly budget')}
+    <div class="field"><label>Personal (৳, 0 = none)</label><input id="bPersonal" type="text" inputmode="decimal" value="${budgetFor('personal')||''}"></div>
+    <div class="field"><label>Teaching (৳, 0 = none)</label><input id="bBusiness" type="text" inputmode="decimal" value="${budgetFor('business')||''}"></div>
+    <div class="modal-actions"><button class="btn primary" id="bSave">Save</button></div>
+  `, {center:true, onMount: root=>{
+    root.querySelector('#bSave').addEventListener('click',()=>{
+      const read = id => { const v = root.querySelector(id).value.trim(); if(!v) return 0; const r = safeCalc(v); return r.ok && r.value>0 ? round2(r.value) : NaN; };
+      const p = read('#bPersonal'), b = read('#bBusiness');
+      if(isNaN(p) || isNaN(b)){ toast('Enter a valid number, or leave blank'); return; }
+      DB.settings.monthlyBudgetPersonal = p;
+      DB.settings.monthlyBudgetBusiness = b;
+      saveDB(); closeModal(); toast('Budget saved'); render();
+    });
+  }});
+}
+
+/* ---------- Calculator tab ---------- */
+function moneyCalcHTML(){
+  const keys = ['C','⌫','%','÷','7','8','9','×','4','5','6','−','1','2','3','+','(','0','.',')'];
+  return `
+  <div class="card">
+    <div class="field" style="margin-bottom:4px;">
+      <label>Type with your keyboard, or use the keys</label>
+      <input id="cExpr" type="text" inputmode="none" autocomplete="off" placeholder="e.g. 1200/4+50" value="${escapeHTML(calcExpr)}">
+    </div>
+    <div class="calc-out" id="cOut"></div>
+    <div class="keypad">
+      ${keys.map(k=>`<button type="button" class="btn ${/[÷×−+%]/.test(k)?'ghost':''}" data-ck="${k}">${k}</button>`).join('')}
+      <button type="button" class="btn primary" data-ck="=" style="grid-column:span 4;">=</button>
+    </div>
+    <button class="btn block" id="cLog" style="margin-top:12px;max-width:360px;">Log this as an expense</button>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">History</div><button class="btn sm ghost" id="cClearHist">Clear</button></div>
+    <div id="cHist"></div>
+  </div>`;
+}
+
+function calcPreview(){
+  const out = document.getElementById('cOut'); if(!out) return;
+  const r = safeCalc(calcExpr);
+  out.textContent = (r.ok && String(r.value)!==calcExpr.trim()) ? '= '+fmtNum(r.value) : '';
+}
+function calcRenderHistory(){
+  const el = document.getElementById('cHist'); if(!el) return;
+  el.innerHTML = calcHistory.length===0 ? `<div class="hint">Nothing yet. Press = to keep a calculation here.</div>` :
+    `<div class="list">${calcHistory.map((h,i)=>`<div class="item" style="cursor:pointer;" data-ch="${i}"><div class="body"><div class="meta">${escapeHTML(h.expr)}</div><div class="title">= ${fmtNum(h.value)}</div></div></div>`).join('')}</div>`;
+  el.querySelectorAll('[data-ch]').forEach(n=>n.addEventListener('click',()=>{
+    const h = calcHistory[Number(n.dataset.ch)]; if(!h) return;
+    calcExpr = String(h.value);
+    document.getElementById('cExpr').value = calcExpr;
+    calcPreview();
+  }));
+}
+function calcPress(k){
+  const inp = document.getElementById('cExpr'); if(!inp) return;
+  if(k==='C') calcExpr = '';
+  else if(k==='⌫') calcExpr = calcExpr.slice(0,-1);
+  else if(k==='='){
+    const r = safeCalc(calcExpr);
+    if(!r.ok){ document.getElementById('cOut').textContent = r.error || 'Type something first'; return; }
+    if(String(r.value)!==calcExpr.trim()){
+      calcHistory.unshift({expr:calcExpr, value:r.value});
+      calcHistory = calcHistory.slice(0,10);
+      calcRenderHistory();
+    }
+    calcExpr = String(r.value);
+  }
+  else calcExpr += k;
+  inp.value = calcExpr;
+  calcPreview();
+}
+
+/* ---------- binding ---------- */
+function bindMoney(){
+  const view = document.getElementById('view');
+  view.querySelectorAll('[data-money-tab]').forEach(b=>b.addEventListener('click',()=>{ moneyTab=b.dataset.moneyTab; render(); }));
+  view.querySelectorAll('[data-exp-edit]').forEach(n=>n.addEventListener('click',()=>openExpenseEdit(n.dataset.expEdit)));
+
+  if(moneyTab==='log'){
+    view.querySelectorAll('[data-money-kind]').forEach(b=>b.addEventListener('click',()=>{ moneyKind=b.dataset.moneyKind; render(); }));
+    view.querySelectorAll('[data-money-cat]').forEach(b=>b.addEventListener('click',()=>{ moneyLastCat[moneyKind]=b.dataset.moneyCat; render(); }));
+    const amt = view.querySelector('#mAmount'), note = view.querySelector('#mNote'), date = view.querySelector('#mDate');
+    amt.addEventListener('input', ()=>{ moneyDraft.amount = amt.value; moneyHintUpdate(); });
+    note.addEventListener('input', ()=>{ moneyDraft.note = note.value; });
+    date.addEventListener('change', ()=>{ moneyDraft.date = date.value; });
+    [amt,note].forEach(el=>el.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); addExpenseFromForm(); } }));
+    view.querySelector('#mAdd').addEventListener('click', addExpenseFromForm);
+    moneyHintUpdate();
+  } else if(moneyTab==='month'){
+    view.querySelector('#mMonth').addEventListener('change', e=>{ moneyMonth = /^\d{4}-\d{2}$/.test(e.target.value) ? e.target.value : null; render(); });
+    view.querySelectorAll('[data-money-filter]').forEach(b=>b.addEventListener('click',()=>{ moneyFilter=b.dataset.moneyFilter; render(); }));
+    view.querySelector('#mBudgetBtn').addEventListener('click', openBudgetModal);
+  } else {
+    const inp = view.querySelector('#cExpr');
+    inp.addEventListener('input', ()=>{ calcExpr = inp.value; calcPreview(); });
+    inp.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); calcPress('='); } });
+    view.querySelectorAll('[data-ck]').forEach(b=>b.addEventListener('click',()=>calcPress(b.dataset.ck)));
+    view.querySelector('#cClearHist').addEventListener('click',()=>{ calcHistory=[]; calcRenderHistory(); });
+    view.querySelector('#cLog').addEventListener('click',()=>{
+      const r = safeCalc(calcExpr);
+      if(!r.ok || !(r.value>0)){ toast('Calculate a positive number first'); return; }
+      moneyDraft.amount = String(round2(r.value));
+      moneyTab = 'log';
+      render();
+    });
+    calcPreview();
+    calcRenderHistory();
+  }
+}
 
 function render(){
+  document.body.setAttribute('data-page', ROUTE.page); // CSS hook for desktop layout
   document.getElementById('pageHeading').textContent = PAGE_TITLES[ROUTE.page] || 'Teacher Planner';
   renderNav();
   renderDemoBanner();
@@ -864,6 +1405,7 @@ function render(){
     case 'study': view.innerHTML = renderStudy(); bindStudy(); break;
     case 'exams': view.innerHTML = renderExams(); bindExams(); break;
     case 'fees': view.innerHTML = renderFees(); bindFees(); break;
+    case 'money': view.innerHTML = renderMoney(); bindMoney(); break;
     case 'reports': view.innerHTML = renderReports(); bindReports(); break;
     case 'settings': view.innerHTML = renderSettings(); bindSettings(); break;
     case 'notes': view.innerHTML = renderNotesPage(ROUTE.params.category||null, !!ROUTE.params.showDone); bindNotesPage(); break;
@@ -3970,6 +4512,21 @@ document.getElementById('searchToggleBtn').addEventListener('click', ()=>{
   if(bar.style.display==='block') document.getElementById('searchInput').focus();
 });
 document.getElementById('searchInput').addEventListener('input', e=>runSearch(e.target.value));
+// Desktop keyboard shortcuts: Esc closes the open dialog, "/" jumps to search.
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape'){
+    if(document.getElementById('modalBackdrop')) closeModal();
+    return;
+  }
+  if(e.key==='/' && !e.ctrlKey && !e.metaKey && !e.altKey){
+    const t = e.target, tag = t && t.tagName;
+    if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT' || (t && t.isContentEditable)) return;
+    if(document.getElementById('modalBackdrop')) return;
+    e.preventDefault();
+    document.getElementById('searchBar').style.display = 'block';
+    document.getElementById('searchInput').focus();
+  }
+});
 
 document.getElementById('brandEyebrow').textContent = DB.settings.brand;
 
@@ -3982,6 +4539,7 @@ document.getElementById('brandEyebrow').textContent = DB.settings.brand;
 function refreshTick(){
   autoFillMissedSessionLogs();
   if(ROUTE.page==='today' && todayEditMode) return; // never interrupt mid-edit on the schedule editor
+  if(moneyIsEditing()) return; // never wipe a half-typed expense / calculation
   render();
 }
 setInterval(refreshTick, 60000);

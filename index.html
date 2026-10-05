@@ -290,6 +290,8 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 }
 
 /* ---------- Money section ---------- */
+.pos{color:var(--ok);}
+.plan-hint{font-size:12px;color:var(--ink-faint);margin-top:8px;line-height:1.45;}
 .money-cols{display:block;}
 .keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;max-width:360px;}
 .keypad .btn{padding:14px 0;font-size:17px;}
@@ -304,6 +306,17 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 @media (min-width:900px){
   .money-cols{display:grid;grid-template-columns:minmax(320px,400px) 1fr;gap:20px;align-items:start;}
 }
+
+/* ---------- Batch exam table ---------- */
+.be-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);}
+.be-row:last-child{border-bottom:none;}
+.be-name{font-weight:600;overflow-wrap:anywhere;}
+.be-row.abs .be-name{opacity:.5;text-decoration:line-through;}
+.be-in{display:flex;align-items:center;gap:6px;}
+.be-in input{width:84px;padding:8px 10px;}
+.be-of{color:var(--ink-faint);font-size:13px;white-space:nowrap;}
+.be-abs{display:flex;align-items:center;font-size:12.5px;color:var(--ink-faint);white-space:nowrap;margin:0;}
+.be-abs input{width:auto;margin:0 5px 0 0;}
 </style>
 </head>
 <body>
@@ -339,7 +352,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-04.1';
+const APP_BUILD = '2026-10-06.1';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -387,6 +400,7 @@ function defaultDB(){
       monthlySalary:0,
       // Money section budgets (0 = no budget)
       monthlyBudgetPersonal:0, monthlyBudgetBusiness:0,
+      moneyCarry:{},   // {'YYYY-MM': cash carried over, typed in by hand}
       // Google Sheets backup (push-only from the app; restore is on-demand/manual).
       sheetsWebAppUrl:'', sheetsAutoBackup:false, lastSheetsBackupAt:null,
       // PIN confirmation gate for Export/Import/Restore — protects against
@@ -399,10 +413,15 @@ function defaultDB(){
     classRecords:[],  // {id,studentId,subject,date,chapter,topic,page,completed,homework,homeworkDeadline,understanding,weakness,nextTopic,note,createdAt}
     homework:[],      // {id,studentId,subject,homework,givenDate,dueDate,status,classRecordId}
     attendance:[],    // {id,studentId,date,status}
-    exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes,status:'Scheduled'|'Completed'}
+    exams:[],         // {id,name,studentId,subject,chapter,date,total,obtained,notes,status:'Scheduled'|'Completed', batchExamId?}
+    batchExams:[],    // {id,batchId,name,subject,chapter,date,total,notes,absentIds:[],createdAt} — header for an exam entered for a whole batch
     fees:[],          // {id,studentId,month,monthlyFee,paid,paymentDate,method,notes}
     tasks:[],         // {id,title,date,priority,completed,notes}
     expenses:[],      // {id,date,amount,kind:'personal'|'business',category,note,createdAt} — Money section
+    incomes:[],       // {id,date,amount,source,note,createdAt} — outside income (tuition fees come from DB.fees)
+    loans:[],         // {id,person,direction:'lent'|'borrowed',amount,date,dueDate,note,repayments:[{id,date,amount}],createdAt}
+    savingPots:[],    // {id,name,createdAt} — savings kept apart from cash
+    savingTx:[],      // {id,potId,date,amount,type:'in'|'out',opening?,note,createdAt}
     notes:[],         // {id,date,subject,category,done,createdAt} — general-purpose dated notes, e.g. lending/borrowing records, reminders
     syllabus:[],      // {id,studentId,subject,chapter,topic,status}
     studyPlan:[],
@@ -461,6 +480,9 @@ function mergeIntoDefaults(parsed){
     }
   });
   if(!Array.isArray(merged.expenses)) merged.expenses = []; // backups from before the Money section
+  if(!Array.isArray(merged.batchExams)) merged.batchExams = []; // backups from before batch exams
+  ['incomes','loans','savingPots','savingTx'].forEach(k=>{ if(!Array.isArray(merged[k])) merged[k] = []; }); // backups from before Money v2
+  if(!merged.settings.moneyCarry || typeof merged.settings.moneyCarry!=='object' || Array.isArray(merged.settings.moneyCarry)) merged.settings.moneyCarry = {};
   if(!merged.settings.maghribStudentId){
     const safa = (merged.students||[]).find(s=>s.name==='Safa');
     if(safa) merged.settings.maghribStudentId = safa.id;
@@ -790,10 +812,18 @@ function scheduleSheetsBackup(){
   sheetsBackupTimer = setTimeout(pushToSheets, 5000);
 }
 
+// A brand-new device / cleared browser starts EMPTY. Pushing that would overwrite the real backup,
+// so an empty database is never sent (the sheet also refuses it on its side).
+function isDbEmpty(){
+  return ['students','exams','batchExams','fees','attendance','classRecords','notes','expenses','incomes','loans','savingPots','savingTx']
+    .every(k=>!(DB[k] && DB[k].length));
+}
+let sheetsRefusalShown = false;
 async function pushToSheets(silent){
   if(DEMO_MODE){ if(!silent) toast('Sheets backup is disabled in demo mode'); return; }
   const url = DB.settings.sheetsWebAppUrl;
   if(!url) { if(!silent) toast('⚠ Add your Apps Script Web App URL in Settings first'); return; }
+  if(isDbEmpty()){ if(!silent) toast('Nothing to back up yet. On a new device use Restore first — backing up now could replace your real backup with an empty one.'); return; }
   if(!silent) toast('Backing up to Sheet…');
   try{
     const res = await fetch(url, {
@@ -802,14 +832,17 @@ async function pushToSheets(silent){
       body: JSON.stringify({ data: DB })
     });
     const json = await res.json().catch(()=>({ok:false,error:'Bad response'}));
-    if(!json.ok) throw new Error(json.error||'Unknown error');
+    if(!json.ok){ const er = new Error(json.error||'Unknown error'); er.refused = !!json.refused; throw er; }
     DB.settings.lastSheetsBackupAt = new Date().toISOString();
     localStorage.setItem(DB_KEY, JSON.stringify(DB)); // direct write — avoid re-triggering saveDB's own debounce loop
     if(ROUTE.page==='settings') render();
     if(!silent) toast('Backed up to Sheet');
   }catch(err){
     console.warn('Sheets backup failed (will retry on next change):', err);
-    if(!silent) toast('⚠ Sheet backup failed — check the URL and your connection');
+    if(err && err.refused){
+      // The sheet deliberately said no (e.g. it would overwrite real data with an empty backup). Say so — even for auto-backups, once.
+      if(!silent || !sheetsRefusalShown){ sheetsRefusalShown = true; toast('⚠ Backup refused: ' + escapeHTML(err.message)); }
+    } else if(!silent) toast('⚠ Sheet backup failed — check the URL and your connection');
   }
 }
 
@@ -1066,56 +1099,7 @@ function expenseItemHTML(e, showDate){
   </div>`;
 }
 
-/* ---------- page shell ---------- */
-function renderMoney(){
-  const tabs = [['log','Log'],['month','Month'],['calc','Calculator']];
-  const body = moneyTab==='month' ? moneyMonthHTML() : moneyTab==='calc' ? moneyCalcHTML() : moneyLogHTML();
-  return `<div class="tabs">${tabs.map(t=>`<button class="tab ${moneyTab===t[0]?'active':''}" data-money-tab="${t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
-}
 
-/* ---------- Log tab ---------- */
-function moneyLogHTML(){
-  const today = todayISO();
-  const cats = EXPENSE_CATEGORIES[moneyKind];
-  const cat = moneyCategoryFor(moneyKind);
-  const since = addDaysISO(today,-6);
-  const recent = (DB.expenses||[]).filter(e=>/^\d{4}-\d{2}-\d{2}$/.test(edate(e)) && edate(e)>=since)
-    .sort((a,b)=> edate(b).localeCompare(edate(a)) || String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
-  const groups = {};
-  recent.forEach(e=>{ (groups[edate(e)] = groups[edate(e)] || []).push(e); });
-  const days = Object.keys(groups).sort().reverse();
-  const todayTotal = sumAmt(recent.filter(e=>edate(e)===today));
-  const weekTotal = sumAmt(recent.filter(e=>edate(e)<=today));
-  return `
-  <div class="money-cols">
-    <div class="card">
-      <div class="card-title">Add expense</div>
-      <div class="chip-select" style="margin-bottom:14px;">
-        ${Object.keys(EXPENSE_KINDS).map(k=>`<button type="button" class="chip ${moneyKind===k?'on':''}" data-money-kind="${k}">${EXPENSE_KINDS[k]}</button>`).join('')}
-      </div>
-      <div class="field">
-        <label>Amount (৳) — you can type things like 120+50</label>
-        <input id="mAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${escapeHTML(moneyDraft.amount)}">
-        <div class="hint" id="mHint"></div>
-      </div>
-      <div class="field">
-        <label>Category</label>
-        <div class="chip-select">
-          ${cats.map(c=>`<button type="button" class="chip ${c===cat?'on':''}" data-money-cat="${escapeHTML(c)}">${escapeHTML(c)}</button>`).join('')}
-        </div>
-      </div>
-      <div class="field"><label>Note (optional)</label><input id="mNote" type="text" maxlength="120" autocomplete="off" value="${escapeHTML(moneyDraft.note)}"></div>
-      <div class="field"><label>Date</label><input id="mDate" type="date" value="${escapeHTML(moneyDraft.date||today)}"></div>
-      <button class="btn primary block" id="mAdd">Add expense</button>
-    </div>
-    <div class="card">
-      <div class="row" style="margin-bottom:6px;"><div class="card-title" style="margin:0;">Last 7 days</div><div style="font-size:13px;color:var(--ink-faint);">Today ${fmtMoney(todayTotal)} · Week ${fmtMoney(weekTotal)}</div></div>
-      ${days.length===0 ? `<div class="empty">Nothing logged yet. Add your first expense.</div>` : days.map(d=>`
-        <div class="row" style="margin:14px 0 6px;"><span class="sub-heading" style="margin:0;">${expDayLabel(d)}</span><span style="font-size:13px;font-weight:700;">${fmtMoney(sumAmt(groups[d]))}</span></div>
-        <div class="list">${groups[d].map(e=>expenseItemHTML(e,false)).join('')}</div>`).join('')}
-    </div>
-  </div>`;
-}
 
 function moneyHintUpdate(){
   const h = document.getElementById('mHint'); if(!h) return;
@@ -1124,28 +1108,6 @@ function moneyHintUpdate(){
   h.textContent = (r.ok && !plain) ? '= '+fmtMoney(r.value) : '';
 }
 
-function addExpenseFromForm(){
-  const r = safeCalc(moneyDraft.amount);
-  if(!r.ok || !(r.value>0) || r.value>1e9){
-    toast('Enter a valid amount');
-    const a = document.getElementById('mAmount'); if(a) a.focus();
-    return;
-  }
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(moneyDraft.date||'') ? moneyDraft.date : todayISO();
-  const cat = moneyCategoryFor(moneyKind);
-  const value = round2(r.value);
-  DB.expenses.push({
-    id:uid('exp'), date, amount:value, kind:moneyKind, category:cat,
-    note:(moneyDraft.note||'').trim().slice(0,120), createdAt:new Date().toISOString()
-  });
-  saveDB();
-  moneyDraft = {amount:'', note:'', date:moneyDraft.date};
-  toast(date===todayISO() ? `Added ${fmtMoney(value)} · ${cat}` : `Added ${fmtMoney(value)} · ${cat} on ${date}`);
-  render();
-  if(window.matchMedia && matchMedia('(pointer:fine)').matches){
-    const a = document.getElementById('mAmount'); if(a) a.focus();   // fast repeat entry on PC only
-  }
-}
 
 function openExpenseEdit(id){
   const e = (DB.expenses||[]).find(x=>x.id===id);
@@ -1193,83 +1155,6 @@ function openExpenseEdit(id){
   }});
 }
 
-/* ---------- Month tab ---------- */
-function moneyMonthHTML(){
-  const cur = todayISO().slice(0,7);
-  const ym = moneyMonth || cur;
-  const f = moneyFilter;
-  const list = expensesFor(ym,f);
-  const total = sumAmt(list);
-  const isCur = ym===cur;
-  const dim = daysInMonthYM(ym);
-  const elapsed = ym<cur ? dim : (isCur ? Number(todayISO().slice(8,10)) : 0);
-  const avg = elapsed>0 ? total/elapsed : 0;
-  const projected = isCur && total>0 ? avg*dim : null;
-  // Compare like with like: a half-finished month vs last month's same days.
-  const prev = shiftMonth(ym,-1);
-  let prevList = expensesFor(prev,f);
-  if(isCur) prevList = prevList.filter(e=>Number(edate(e).slice(8,10))<=elapsed);
-  const prevTotal = sumAmt(prevList);
-  let vsHtml = '—', vsLbl = 'vs last month';
-  if(prevTotal>0){
-    const diff = total-prevTotal, pct = Math.round(Math.abs(diff)/prevTotal*100);
-    vsHtml = `${diff>0?'▲':diff<0?'▼':''} ${pct}%`;
-    vsLbl = `${isCur?'vs same days of':'vs'} ${monthLabel(prev)} (${fmtMoney(prevTotal)})`;
-  } else if(total>0){ vsLbl = 'nothing recorded last month'; }
-  // categories
-  const byCat = {};
-  list.forEach(e=>{ const c=e.category||'Other'; byCat[c]=round2((byCat[c]||0)+(Number(e.amount)||0)); });
-  const cats = Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]);
-  const maxCat = cats.length ? byCat[cats[0]] : 0;
-  // cash line (all kinds, regardless of filter)
-  const allSpent = sumAmt(expensesFor(ym,'all'));
-  const feesIn = feesReceivedIn(ym);
-  const left = feesIn-allSpent;
-  // budgets
-  const budgetRows = ['personal','business'].filter(k=>budgetFor(k)>0).map(k=>{
-    const spent = sumAmt(expensesFor(ym,k)), b = budgetFor(k), pct = Math.min(100,Math.round(spent/b*100));
-    const over = spent>b;
-    return `<div style="margin-bottom:12px;">
-      <div class="row"><span>${EXPENSE_KINDS[k]}</span><span><b>${fmtMoney(spent)}</b> of ${fmtMoney(b)}</span></div>
-      <div class="progress-bar"><div style="width:${pct}%;${over?'background:var(--err);':''}"></div></div>
-      <div class="hint" style="${over?'color:var(--err);':''}">${over?`Over by ${fmtMoney(round2(spent-b))}`:`${fmtMoney(round2(b-spent))} left`}</div>
-    </div>`;
-  }).join('');
-  const entries = list.slice().sort((a,b)=> edate(b).localeCompare(edate(a)) || String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,100);
-  return `
-  <div class="field" style="margin-bottom:10px;"><input type="month" id="mMonth" value="${ym}"></div>
-  <div class="chip-select" style="margin-bottom:14px;">
-    ${[['all','All'],['personal','Personal'],['business','Teaching']].map(x=>`<button type="button" class="chip ${f===x[0]?'on':''}" data-money-filter="${x[0]}">${x[1]}</button>`).join('')}
-  </div>
-  <div class="card">
-    <div class="grid2">
-      <div class="stat hot"><div class="num">${fmtMoney(total)}</div><div class="lbl">Spent in ${monthLabel(ym)}</div></div>
-      <div class="stat"><div class="num">${fmtMoney(Math.round(avg))}</div><div class="lbl">Average per day</div></div>
-      <div class="stat"><div class="num">${projected===null?'—':fmtMoney(Math.round(projected))}</div><div class="lbl">${projected===null?'Month-end projection (current month only)':'Projected by month end'}</div></div>
-      <div class="stat"><div class="num">${vsHtml}</div><div class="lbl">${escapeHTML(vsLbl)}</div></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">Budget</div><button class="btn sm" id="mBudgetBtn">Set budget</button></div>
-    ${budgetRows || `<div class="hint">No monthly budget set.</div>`}
-  </div>
-  <div class="card">
-    <div class="card-title">By category</div>
-    ${cats.length===0 ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : cats.map(c=>`
-      <div style="margin-bottom:12px;">
-        <div class="row"><span>${escapeHTML(c)}</span><span><b>${fmtMoney(byCat[c])}</b> · ${total>0?Math.round(byCat[c]/total*100):0}%</span></div>
-        <div class="progress-bar"><div style="width:${maxCat>0?Math.round(byCat[c]/maxCat*100):0}%"></div></div>
-      </div>`).join('')}
-  </div>
-  ${feesIn>0 ? `<div class="card">
-    <div class="card-title">Cash check — ${monthLabel(ym)}</div>
-    <div class="two-col-item"><span>Fees received</span><b>${fmtMoney(feesIn)}</b></div>
-    <div class="two-col-item"><span>Spent (personal + teaching)</span><b>${fmtMoney(allSpent)}</b></div>
-    <div class="two-col-item"><span>Left</span><b style="color:${left<0?'var(--err)':'var(--ok)'};">${left<0?'−':''}${fmtMoney(Math.abs(round2(left)))}</b></div>
-    <div class="hint" style="margin-top:6px;">Fees counted by the date they were paid. Salary and other income aren't included.</div>
-  </div>` : ''}
-  ${entries.length ? `<div class="card"><div class="card-title">Entries</div><div class="list">${entries.map(e=>expenseItemHTML(e,true)).join('')}</div></div>` : ''}`;
-}
 
 function openBudgetModal(){
   openModal(`
@@ -1347,25 +1232,626 @@ function calcPress(k){
 }
 
 /* ---------- binding ---------- */
+
+/* =========================================================================
+   MONEY v2 — outside income, savings pots, dhar (lent / borrowed), month plan.
+   DB.incomes   = [{id,date,amount,source,note,createdAt}]
+   DB.savingPots= [{id,name,createdAt}]
+   DB.savingTx  = [{id,potId,date,amount,type:'in'|'out',opening?,note,createdAt}]   (savings are NOT cash)
+   DB.loans     = [{id,person,direction:'lent'|'borrowed',amount,date,dueDate,note,
+                    repayments:[{id,date,amount}],createdAt}]
+   DB.settings.moneyCarry = {'YYYY-MM': amount}   (typed-in cash carried over; no running balance)
+   ========================================================================= */
+const INCOME_SOURCES = ['Freelance / Web','Salary','Gift','Other'];
+let moneyMode = 'expense';            // Log tab: 'expense' | 'income'
+let moneyIncomeSrc = null;
+let loanShowSettled = false;
+
+function lastDayISO(ym){ return ym+'-'+String(daysInMonthYM(ym)).padStart(2,'0'); }
+function monthOf(d){ return String(d||'').slice(0,7); }
+function okISO(d){ return /^\d{4}-\d{2}-\d{2}$/.test(String(d||'')); }
+function fmtSigned(v){ return v<0 ? '−'+fmtMoney(Math.abs(round2(v))) : fmtMoney(round2(v)); }
+function shortDate(iso){ return okISO(iso) ? new Date(iso+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''; }
+function incomesFor(ym){ return (DB.incomes||[]).filter(i=>monthOf(i.date)===ym); }
+function incomeSourceDefault(){ return INCOME_SOURCES.indexOf(moneyIncomeSrc)>=0 ? moneyIncomeSrc : INCOME_SOURCES[0]; }
+
+/* ---- loans ---- */
+function repsOf(l){ return l && Array.isArray(l.repayments) ? l.repayments : []; }   // tolerate junk in imported data
+function loanDir(l){ return l && l.direction==='borrowed' ? 'borrowed' : 'lent'; }
+function loanPaid(l, asOf){
+  return repsOf(l).reduce((a,r)=> (!asOf || String(r.date||'')<=asOf) ? a+(Number(r.amount)||0) : a, 0);
+}
+// Outstanding on a given day (default: now). A loan made after that day didn't exist yet.
+function loanOutstanding(l, asOf){
+  if(asOf && String(l.date||'')>asOf) return 0;
+  return Math.max(0, round2((Number(l.amount)||0) - loanPaid(l, asOf)));
+}
+function personKey(l){ return String(l.person||'').trim().toLowerCase(); }
+
+/* ---- savings ---- */
+function potBalance(id){
+  return round2((DB.savingTx||[]).filter(t=>t.potId===id).reduce((a,t)=>a+(t.type==='out'?-1:1)*(Number(t.amount)||0),0));
+}
+function savingsTotal(){ return round2((DB.savingPots||[]).reduce((a,p)=>a+potBalance(p.id),0)); }
+// Net moved INTO savings in a month (deposits − withdrawals). Opening balances don't count: that money was never part of this month's cash.
+function netSavedIn(ym){
+  return round2((DB.savingTx||[]).filter(t=>!t.opening && monthOf(t.date)===ym)
+    .reduce((a,t)=>a+(t.type==='out'?-1:1)*(Number(t.amount)||0),0));
+}
+
+/* ---- the month plan: "how much can I spend this month?" ----
+   Real cash moves only. Money OWED TO YOU is never counted as spendable. */
+function moneyPlan(ym){
+  const end = lastDayISO(ym);
+  const fees = feesReceivedIn(ym);
+  const outside = round2(incomesFor(ym).reduce((a,i)=>a+(Number(i.amount)||0),0));
+  const carry = Number((DB.settings.moneyCarry||{})[ym]) || 0;
+  let borrowedIn=0, lentOut=0, repaidByMe=0, repaidToMe=0, toRepay=0, owedToMe=0;
+  (DB.loans||[]).forEach(l=>{
+    const a = Number(l.amount)||0, lent = loanDir(l)==='lent';
+    if(monthOf(l.date)===ym){ if(lent) lentOut += a; else borrowedIn += a; }
+    repsOf(l).forEach(r=>{
+      if(monthOf(r.date)===ym){ const x = Number(r.amount)||0; if(lent) repaidToMe += x; else repaidByMe += x; }
+    });
+    if(l.dueDate && monthOf(l.dueDate)<=ym){          // due this month or overdue from before
+      const out = loanOutstanding(l, end);
+      if(lent) owedToMe += out; else toRepay += out;
+    }
+  });
+  const saved = netSavedIn(ym);
+  const spent = sumAmt(expensesFor(ym,'all'));
+  const canSpend = round2(fees + outside + carry + borrowedIn + repaidToMe - lentOut - repaidByMe - saved - toRepay);
+  return {fees,outside,carry,borrowedIn,repaidToMe,lentOut,repaidByMe,saved,toRepay,owedToMe:round2(owedToMe),canSpend,spent,left:round2(canSpend-spent)};
+}
+
+function planCardHTML(ym){
+  const p = moneyPlan(ym), cur = todayISO().slice(0,7), isCur = ym===cur;
+  const dim = daysInMonthYM(ym), elapsed = Number(todayISO().slice(8,10));
+  const line = (label, val, sign)=>`<div class="two-col-item"><span>${label}</span><b class="${sign==='+'?'pos':''}">${sign}${fmtMoney(Math.abs(val))}</b></div>`;
+  const rows = [
+    line('Tuition fees received','' + p.fees,'+'),
+    line('Outside income', p.outside,'+'),
+    `<div class="two-col-item"><span>Carried over from last month <button class="btn sm ghost" id="mCarryBtn" style="margin-left:6px;">Edit</button></span><b class="${p.carry>0?'pos':''}">${p.carry>0?'+':''}${fmtMoney(p.carry)}</b></div>`,
+    p.borrowedIn>0 ? line('Borrowed this month', p.borrowedIn,'+') : '',
+    p.repaidToMe>0 ? line('Repayments you received', p.repaidToMe,'+') : '',
+    p.lentOut>0 ? line('Lent out this month', p.lentOut,'−') : '',
+    p.repaidByMe>0 ? line('Repayments you made', p.repaidByMe,'−') : '',
+    p.saved>0 ? line('Saved this month','' + p.saved,'−') : '',
+    p.saved<0 ? line('Taken out of savings', Math.abs(p.saved),'+') : '',
+    p.toRepay>0 ? line('Still to repay (due by this month)', p.toRepay,'−') : ''
+  ].join('');
+  let pace = '';
+  if(isCur && p.spent>0 && p.canSpend>0){
+    const proj = Math.round(p.spent/elapsed*dim);
+    pace = proj>p.canSpend
+      ? `<div class="plan-hint" style="color:var(--err);">At this pace you'll spend about ${fmtMoney(proj)} — ${fmtMoney(proj-Math.round(p.canSpend))} more than you can.</div>`
+      : `<div class="plan-hint">At this pace you'll spend about ${fmtMoney(proj)} — inside what you can spend.</div>`;
+  }
+  const totalOwe = round2((DB.loans||[]).filter(l=>loanDir(l)==='borrowed').reduce((a,l)=>a+loanOutstanding(l),0));
+  return `
+  <div class="card">
+    <div class="card-title">Month plan — ${monthLabel(ym)}</div>
+    ${rows}
+    <div class="stat ${p.canSpend>0?'hot':''}" style="margin-top:12px;">
+      <div class="num" style="${p.canSpend<0?'color:var(--err);':''}">${fmtSigned(p.canSpend)}</div>
+      <div class="lbl">${p.canSpend<0?'You are short before spending anything':'You can spend this month'}</div>
+    </div>
+    <div class="two-col-item" style="margin-top:8px;"><span>Spent so far</span><b>${fmtMoney(p.spent)}</b></div>
+    <div class="two-col-item"><span>${p.left<0?'Over by':'Left to spend'}</span><b style="color:${p.left<0?'var(--err)':'var(--ok)'};">${fmtMoney(Math.abs(p.left))}</b></div>
+    ${pace}
+    ${p.owedToMe>0 ? `<div class="plan-hint">Not counted: ${fmtMoney(p.owedToMe)} owed to you, due by this month. Counting it before it arrives is how people overspend.</div>` : ''}
+    ${totalOwe>0 ? `<div class="plan-hint">You owe ${fmtMoney(totalOwe)} in total (all due dates).</div>` : ''}
+    <div class="plan-hint">Only as accurate as what you've entered. Cash from before this month only counts if you type it into "Carried over".</div>
+  </div>`;
+}
+
+function openCarryModal(ym){
+  const cur = Number((DB.settings.moneyCarry||{})[ym])||0;
+  openModal(`
+    ${modalHead('Carried over from last month')}
+    <div class="page-sub" style="margin-bottom:10px;">Cash you already had at the start of ${monthLabel(ym)}. There is no running cash balance, so type it here if you want it counted.</div>
+    <div class="field"><label>Amount (৳, 0 = none)</label><input id="cAmt" type="text" inputmode="decimal" value="${cur||''}"></div>
+    <div class="modal-actions"><button class="btn primary" id="cSave">Save</button></div>
+  `, {center:true, onMount: root=>{
+    root.querySelector('#cSave').addEventListener('click',()=>{
+      const t = root.querySelector('#cAmt').value.trim();
+      const r = t ? safeCalc(t) : {ok:true,value:0};
+      if(!r.ok || r.value<0 || r.value>1e9){ toast('Enter a valid amount, or leave blank'); return; }
+      const m = Object.assign({}, DB.settings.moneyCarry||{});
+      if(r.value>0) m[ym] = round2(r.value); else delete m[ym];
+      DB.settings.moneyCarry = m;
+      saveDB(); closeModal(); toast('Saved'); render();
+    });
+  }});
+}
+
+/* ---------- page shell ---------- */
+function renderMoney(){
+  const tabs = [['log','Log'],['month','Month'],['dhar','Dhar'],['savings','Savings'],['calc','Calc']];
+  const body = moneyTab==='month' ? moneyMonthHTML() : moneyTab==='dhar' ? moneyDharHTML() :
+               moneyTab==='savings' ? moneySavingsHTML() : moneyTab==='calc' ? moneyCalcHTML() : moneyLogHTML();
+  return `<div class="tabs">${tabs.map(t=>`<button class="tab ${moneyTab===t[0]?'active':''}" data-money-tab="${t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
+}
+
+/* ---------- Log tab (expense / income) ---------- */
+function incomeItemHTML(i, showDate){
+  const note = (i.note||'').trim();
+  return `<div class="item" style="cursor:pointer;" data-inc-edit="${escapeHTML(i.id)}">
+    <div class="dot" style="background:var(--ok)"></div>
+    <div class="body"><div class="title">${escapeHTML(i.source||'Income')}</div><div class="meta">${showDate&&okISO(i.date)?shortDate(i.date)+' · ':''}Income${note?' · '+escapeHTML(note):''}</div></div>
+    <div class="pos" style="font-weight:700;white-space:nowrap;">+${fmtMoney(i.amount)}</div>
+  </div>`;
+}
+function moneyLogHTML(){
+  const today = todayISO();
+  const isInc = moneyMode==='income';
+  const since = addDaysISO(today,-6);
+  const exps = (DB.expenses||[]).filter(e=>okISO(edate(e)) && edate(e)>=since);
+  const incs = (DB.incomes||[]).filter(i=>okISO(i.date) && i.date>=since);
+  const byDay = {};
+  exps.forEach(e=>{ (byDay[edate(e)] = byDay[edate(e)] || []).push({t:'e', x:e, c:String(e.createdAt||'')}); });
+  incs.forEach(i=>{ (byDay[i.date] = byDay[i.date] || []).push({t:'i', x:i, c:String(i.createdAt||'')}); });
+  const days = Object.keys(byDay).sort().reverse();
+  const todaySpent = sumAmt(exps.filter(e=>edate(e)===today));
+  const weekSpent = sumAmt(exps.filter(e=>edate(e)<=today));
+  const modeSwitch = `<div class="chip-select" style="margin-bottom:14px;">
+      <button type="button" class="chip ${!isInc?'on':''}" data-money-mode="expense">Expense</button>
+      <button type="button" class="chip ${isInc?'on':''}" data-money-mode="income">Income</button></div>`;
+  let form;
+  if(isInc){
+    const src = incomeSourceDefault();
+    form = `
+      <div class="field">
+        <label>Amount (৳) — you can type things like 5000+2000</label>
+        <input id="mAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${escapeHTML(moneyDraft.amount)}">
+        <div class="hint" id="mHint"></div>
+      </div>
+      <div class="field"><label>Source</label>
+        <div class="chip-select">${INCOME_SOURCES.map(c=>`<button type="button" class="chip ${c===src?'on':''}" data-income-src="${escapeHTML(c)}">${escapeHTML(c)}</button>`).join('')}</div>
+        <div class="hint">Tuition fees are not entered here — they're counted automatically from Fees.</div>
+      </div>
+      <div class="field"><label>Note (optional)</label><input id="mNote" type="text" maxlength="120" autocomplete="off" value="${escapeHTML(moneyDraft.note)}"></div>
+      <div class="field"><label>Date</label><input id="mDate" type="date" value="${escapeHTML(moneyDraft.date||today)}"></div>
+      <button class="btn primary block" id="mAdd">Add income</button>`;
+  } else {
+    const cats = EXPENSE_CATEGORIES[moneyKind], cat = moneyCategoryFor(moneyKind);
+    form = `
+      <div class="chip-select" style="margin-bottom:14px;">
+        ${Object.keys(EXPENSE_KINDS).map(k=>`<button type="button" class="chip ${moneyKind===k?'on':''}" data-money-kind="${k}">${EXPENSE_KINDS[k]}</button>`).join('')}
+      </div>
+      <div class="field">
+        <label>Amount (৳) — you can type things like 120+50</label>
+        <input id="mAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${escapeHTML(moneyDraft.amount)}">
+        <div class="hint" id="mHint"></div>
+      </div>
+      <div class="field"><label>Category</label>
+        <div class="chip-select">${cats.map(c=>`<button type="button" class="chip ${c===cat?'on':''}" data-money-cat="${escapeHTML(c)}">${escapeHTML(c)}</button>`).join('')}</div>
+      </div>
+      <div class="field"><label>Note (optional)</label><input id="mNote" type="text" maxlength="120" autocomplete="off" value="${escapeHTML(moneyDraft.note)}"></div>
+      <div class="field"><label>Date</label><input id="mDate" type="date" value="${escapeHTML(moneyDraft.date||today)}"></div>
+      <button class="btn primary block" id="mAdd">Add expense</button>`;
+  }
+  return `
+  <div class="money-cols">
+    <div class="card">
+      <div class="card-title">${isInc?'Add income':'Add expense'}</div>
+      ${modeSwitch}${form}
+    </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:6px;"><div class="card-title" style="margin:0;">Last 7 days</div><div style="font-size:13px;color:var(--ink-faint);">Spent today ${fmtMoney(todaySpent)} · week ${fmtMoney(weekSpent)}</div></div>
+      ${days.length===0 ? `<div class="empty">Nothing logged yet. Add your first entry.</div>` : days.map(d=>{
+        const items = byDay[d].sort((a,b)=>b.c.localeCompare(a.c));
+        const spent = sumAmt(items.filter(z=>z.t==='e').map(z=>z.x));
+        const got = round2(items.filter(z=>z.t==='i').reduce((a,z)=>a+(Number(z.x.amount)||0),0));
+        return `<div class="row" style="margin:14px 0 6px;"><span class="sub-heading" style="margin:0;">${expDayLabel(d)}</span><span style="font-size:13px;font-weight:700;">${spent>0?fmtMoney(spent):''}${got>0?` <span class="pos">+${fmtMoney(got)}</span>`:''}</span></div>
+          <div class="list">${items.map(z=>z.t==='e'?expenseItemHTML(z.x,false):incomeItemHTML(z.x,false)).join('')}</div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function addEntryFromForm(){
+  const r = safeCalc(moneyDraft.amount);
+  if(!r.ok || !(r.value>0) || r.value>1e9){
+    toast('Enter a valid amount');
+    const a = document.getElementById('mAmount'); if(a) a.focus();
+    return;
+  }
+  const date = okISO(moneyDraft.date) ? moneyDraft.date : todayISO();
+  const value = round2(r.value);
+  const note = (moneyDraft.note||'').trim().slice(0,120);
+  let msg;
+  if(moneyMode==='income'){
+    const source = incomeSourceDefault();
+    DB.incomes.push({id:uid('inc'), date, amount:value, source, note, createdAt:new Date().toISOString()});
+    msg = `Income ${fmtMoney(value)} · ${source}`;
+  } else {
+    const cat = moneyCategoryFor(moneyKind);
+    DB.expenses.push({id:uid('exp'), date, amount:value, kind:moneyKind, category:cat, note, createdAt:new Date().toISOString()});
+    msg = `Added ${fmtMoney(value)} · ${cat}`;
+  }
+  saveDB();
+  moneyDraft = {amount:'', note:'', date:moneyDraft.date};
+  toast(date===todayISO() ? msg : `${msg} on ${date}`);
+  render();
+  if(window.matchMedia && matchMedia('(pointer:fine)').matches){
+    const a = document.getElementById('mAmount'); if(a) a.focus();   // fast repeat entry on PC only
+  }
+}
+
+function openIncomeEdit(id){
+  const i = (DB.incomes||[]).find(x=>x.id===id);
+  if(!i) return;
+  const srcs = INCOME_SOURCES.slice(); if(i.source && srcs.indexOf(i.source)<0) srcs.unshift(i.source);
+  openModal(`
+    ${modalHead('Edit income')}
+    <div class="field"><label>Amount (৳)</label><input id="iAmount" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(i.amount))}"></div>
+    <div class="field"><label>Source</label><select id="iSrc">${srcs.map(c=>`<option value="${escapeHTML(c)}" ${c===i.source?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select></div>
+    <div class="field"><label>Note</label><input id="iNote" type="text" maxlength="120" value="${escapeHTML(i.note||'')}"></div>
+    <div class="field"><label>Date</label><input id="iDate" type="date" value="${escapeHTML(String(i.date||''))}"></div>
+    <div class="modal-actions"><button class="btn danger" id="iDel">Delete</button><button class="btn primary" id="iSave">Save</button></div>
+  `, {onMount: root=>{
+    root.querySelector('#iSave').addEventListener('click',()=>{
+      const r = safeCalc(root.querySelector('#iAmount').value);
+      if(!r.ok || !(r.value>0) || r.value>1e9){ toast('Enter a valid amount'); return; }
+      const d = root.querySelector('#iDate').value;
+      i.amount = round2(r.value);
+      i.source = root.querySelector('#iSrc').value;
+      i.note = root.querySelector('#iNote').value.trim().slice(0,120);
+      if(okISO(d)) i.date = d;
+      saveDB(); closeModal(); toast('Saved'); render();
+    });
+    root.querySelector('#iDel').addEventListener('click',()=>{
+      if(!confirm('Delete this income entry?')) return;
+      DB.incomes = DB.incomes.filter(x=>x.id!==id);
+      saveDB(); closeModal(); toast('Deleted'); render();
+    });
+  }});
+}
+
+/* ---------- Month tab ---------- */
+function moneyMonthHTML(){
+  const cur = todayISO().slice(0,7);
+  const ym = moneyMonth || cur;
+  const f = moneyFilter;
+  const list = expensesFor(ym,f);
+  const total = sumAmt(list);
+  const isCur = ym===cur;
+  const dim = daysInMonthYM(ym);
+  const elapsed = ym<cur ? dim : (isCur ? Number(todayISO().slice(8,10)) : 0);
+  const avg = elapsed>0 ? total/elapsed : 0;
+  const projected = isCur && total>0 ? avg*dim : null;
+  // Compare like with like: a half-finished month vs last month's same days.
+  const prev = shiftMonth(ym,-1);
+  let prevList = expensesFor(prev,f);
+  if(isCur) prevList = prevList.filter(e=>Number(edate(e).slice(8,10))<=elapsed);
+  const prevTotal = sumAmt(prevList);
+  let vsHtml = '—', vsLbl = 'vs last month';
+  if(prevTotal>0){
+    const diff = total-prevTotal, pct = Math.round(Math.abs(diff)/prevTotal*100);
+    vsHtml = `${diff>0?'▲':diff<0?'▼':''} ${pct}%`;
+    vsLbl = `${isCur?'vs same days of':'vs'} ${monthLabel(prev)} (${fmtMoney(prevTotal)})`;
+  } else if(total>0){ vsLbl = 'nothing recorded last month'; }
+  const byCat = {};
+  list.forEach(e=>{ const c=e.category||'Other'; byCat[c]=round2((byCat[c]||0)+(Number(e.amount)||0)); });
+  const cats = Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]);
+  const maxCat = cats.length ? byCat[cats[0]] : 0;
+  const budgetRows = ['personal','business'].filter(k=>budgetFor(k)>0).map(k=>{
+    const spent = sumAmt(expensesFor(ym,k)), b = budgetFor(k), pct = Math.min(100,Math.round(spent/b*100));
+    const over = spent>b;
+    return `<div style="margin-bottom:12px;">
+      <div class="row"><span>${EXPENSE_KINDS[k]}</span><span><b>${fmtMoney(spent)}</b> of ${fmtMoney(b)}</span></div>
+      <div class="progress-bar"><div style="width:${pct}%;${over?'background:var(--err);':''}"></div></div>
+      <div class="hint" style="${over?'color:var(--err);':''}">${over?`Over by ${fmtMoney(round2(spent-b))}`:`${fmtMoney(round2(b-spent))} left`}</div>
+    </div>`;
+  }).join('');
+  const entries = list.slice().sort((a,b)=> edate(b).localeCompare(edate(a)) || String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,100);
+  const incs = incomesFor(ym).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  return `
+  <div class="field" style="margin-bottom:10px;"><input type="month" id="mMonth" value="${ym}"></div>
+  ${planCardHTML(ym)}
+  <div class="chip-select" style="margin-bottom:14px;">
+    ${[['all','All'],['personal','Personal'],['business','Teaching']].map(x=>`<button type="button" class="chip ${f===x[0]?'on':''}" data-money-filter="${x[0]}">${x[1]}</button>`).join('')}
+  </div>
+  <div class="card">
+    <div class="grid2">
+      <div class="stat hot"><div class="num">${fmtMoney(total)}</div><div class="lbl">Spent in ${monthLabel(ym)}</div></div>
+      <div class="stat"><div class="num">${fmtMoney(Math.round(avg))}</div><div class="lbl">Average per day</div></div>
+      <div class="stat"><div class="num">${projected===null?'—':fmtMoney(Math.round(projected))}</div><div class="lbl">${projected===null?'Month-end projection (current month only)':'Projected by month end'}</div></div>
+      <div class="stat"><div class="num">${vsHtml}</div><div class="lbl">${escapeHTML(vsLbl)}</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">Budget</div><button class="btn sm" id="mBudgetBtn">Set budget</button></div>
+    ${budgetRows || `<div class="hint">No monthly budget set.</div>`}
+  </div>
+  <div class="card">
+    <div class="card-title">By category</div>
+    ${cats.length===0 ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : cats.map(c=>`
+      <div style="margin-bottom:12px;">
+        <div class="row"><span>${escapeHTML(c)}</span><span><b>${fmtMoney(byCat[c])}</b> · ${total>0?Math.round(byCat[c]/total*100):0}%</span></div>
+        <div class="progress-bar"><div style="width:${maxCat>0?Math.round(byCat[c]/maxCat*100):0}%"></div></div>
+      </div>`).join('')}
+  </div>
+  ${incs.length ? `<div class="card"><div class="card-title">Outside income</div><div class="list">${incs.map(i=>incomeItemHTML(i,true)).join('')}</div></div>` : ''}
+  ${entries.length ? `<div class="card"><div class="card-title">Entries</div><div class="list">${entries.map(e=>expenseItemHTML(e,true)).join('')}</div></div>` : ''}`;
+}
+
+/* ---------- Dhar tab (lent / borrowed) ---------- */
+function loanItemHTML(l){
+  const lent = loanDir(l)==='lent', out = loanOutstanding(l), paid = round2(loanPaid(l));
+  const overdue = out>0 && l.dueDate && l.dueDate<todayISO();
+  return `<div class="item" style="cursor:pointer;" data-loan="${escapeHTML(l.id)}">
+    <div class="dot" style="background:${out<=0?'var(--ink-faint)':overdue?'var(--err)':lent?'var(--teal)':'var(--amber)'}"></div>
+    <div class="body"><div class="title">${escapeHTML(l.person||'?')}</div>
+      <div class="meta">${lent?'Lent':'Borrowed'} ${fmtMoney(l.amount)} · ${shortDate(l.date)}${l.dueDate?' · due '+shortDate(l.dueDate):''}${paid>0?' · repaid '+fmtMoney(paid):''}${overdue?' · <span style="color:var(--err);font-weight:700;">OVERDUE</span>':''}</div></div>
+    <div style="font-weight:700;white-space:nowrap;">${out>0?fmtMoney(out):'Settled'}</div>
+  </div>`;
+}
+function moneyDharHTML(){
+  const loans = DB.loans||[];
+  const open = loans.filter(l=>loanOutstanding(l)>0);
+  const settled = loans.filter(l=>loanOutstanding(l)<=0);
+  const sortByDue = (a,b)=>String(a.dueDate||'9999').localeCompare(String(b.dueDate||'9999')) || String(a.date).localeCompare(String(b.date));
+  const lent = open.filter(l=>loanDir(l)==='lent').sort(sortByDue);
+  const borrowed = open.filter(l=>loanDir(l)==='borrowed').sort(sortByDue);
+  const owedToMe = round2(lent.reduce((a,l)=>a+loanOutstanding(l),0));
+  const iOwe = round2(borrowed.reduce((a,l)=>a+loanOutstanding(l),0));
+  const net = round2(owedToMe-iOwe);
+  const people = {};
+  open.forEach(l=>{
+    const k = personKey(l); if(!k) return;
+    const p = people[k] = people[k] || {name:String(l.person).trim(), net:0};
+    p.net = round2(p.net + (loanDir(l)==='lent'?1:-1)*loanOutstanding(l));
+  });
+  const plist = Object.keys(people).map(k=>people[k]).sort((a,b)=>Math.abs(b.net)-Math.abs(a.net));
+  return `
+  <div class="card">
+    <div class="grid2">
+      <div class="stat ${owedToMe>0?'hot':''}"><div class="num">${fmtMoney(owedToMe)}</div><div class="lbl">People owe you</div></div>
+      <div class="stat ${iOwe>0?'hot':''}"><div class="num">${fmtMoney(iOwe)}</div><div class="lbl">You owe</div></div>
+    </div>
+    <div class="hint" style="margin-top:8px;">${net===0?'Even.':net>0?`Net: you are owed ${fmtMoney(net)}.`:`Net: you owe ${fmtMoney(-net)}.`} Money owed to you is never counted as spendable in the Month plan.</div>
+    <button class="btn primary block" id="lNew" style="margin-top:12px;">+ New loan</button>
+  </div>
+  ${plist.length>1 ? `<div class="card"><div class="card-title">By person</div>${plist.map(p=>`<div class="two-col-item"><span>${escapeHTML(p.name)}</span><b>${p.net===0?'Even':p.net>0?`owes you ${fmtMoney(p.net)}`:`you owe ${fmtMoney(-p.net)}`}</b></div>`).join('')}</div>` : ''}
+  ${lent.length ? `<div class="card"><div class="card-title">They owe you</div><div class="list">${lent.map(loanItemHTML).join('')}</div></div>` : ''}
+  ${borrowed.length ? `<div class="card"><div class="card-title">You owe</div><div class="list">${borrowed.map(loanItemHTML).join('')}</div></div>` : ''}
+  ${open.length===0 ? `<div class="empty">No open loans. Tap "+ New loan" when you lend or borrow.</div>` : ''}
+  ${settled.length ? `<button class="btn ghost block" id="lSettledToggle">${loanShowSettled?'Hide':'Show'} settled (${settled.length})</button>` : ''}
+  ${loanShowSettled && settled.length ? `<div class="card"><div class="card-title">Settled</div><div class="list">${settled.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(loanItemHTML).join('')}</div></div>` : ''}`;
+}
+
+function openLoanForm(loanId){
+  const l = loanId ? (DB.loans||[]).find(x=>x.id===loanId) : null;
+  if(loanId && !l) return;
+  let dir = l ? loanDir(l) : 'lent';
+  const people = [...new Set((DB.loans||[]).map(x=>String(x.person||'').trim()).filter(Boolean))];
+  const paid = l ? loanPaid(l) : 0;
+  openModal(`
+    ${modalHead(l?'Edit loan':'New loan')}
+    <div class="chip-select" style="margin-bottom:14px;">
+      <button type="button" class="chip ${dir==='lent'?'on':''}" data-ldir="lent">I lent (dhar dilam)</button>
+      <button type="button" class="chip ${dir==='borrowed'?'on':''}" data-ldir="borrowed">I borrowed (dhar nilam)</button>
+    </div>
+    <div class="field"><label>Person</label><input id="lPerson" list="lPeople" maxlength="40" autocomplete="off" value="${escapeHTML(l?l.person:'')}"><datalist id="lPeople">${people.map(p=>`<option value="${escapeHTML(p)}">`).join('')}</datalist></div>
+    <div class="field"><label>Amount (৳)</label><input id="lAmt" type="text" inputmode="decimal" autocomplete="off" value="${l?escapeHTML(String(l.amount)):''}"></div>
+    <div class="grid2">
+      <div class="field"><label>Date</label><input id="lDate" type="date" value="${escapeHTML(l?String(l.date||''):todayISO())}"></div>
+      <div class="field"><label>Due date (optional)</label><input id="lDue" type="date" value="${escapeHTML(l?String(l.dueDate||''):'')}"></div>
+    </div>
+    <div class="field"><label>Note (optional)</label><input id="lNote" maxlength="120" value="${escapeHTML(l?(l.note||''):'')}"></div>
+    <div class="modal-actions">${l?`<button class="btn danger" id="lDel">Delete</button>`:''}<button class="btn primary" id="lSave">Save</button></div>
+  `, {onMount: root=>{
+    root.querySelectorAll('[data-ldir]').forEach(b=>b.addEventListener('click',()=>{
+      dir = b.dataset.ldir;
+      root.querySelectorAll('[data-ldir]').forEach(x=>x.classList.toggle('on', x.dataset.ldir===dir));
+    }));
+    root.querySelector('#lSave').addEventListener('click',()=>{
+      const person = root.querySelector('#lPerson').value.trim().slice(0,40);
+      const r = safeCalc(root.querySelector('#lAmt').value);
+      const date = root.querySelector('#lDate').value, due = root.querySelector('#lDue').value;
+      if(!person){ toast('Who is it with?'); return; }
+      if(!r.ok || !(r.value>0) || r.value>1e9){ toast('Enter a valid amount'); return; }
+      if(!okISO(date)){ toast('Pick a date'); return; }
+      if(due && !okISO(due)){ toast('Due date is not valid'); return; }
+      if(l && round2(r.value)<round2(paid)){ toast(`Amount is less than the ${fmtMoney(paid)} already repaid`); return; }
+      const data = {person, direction:dir, amount:round2(r.value), date, dueDate:due||'', note:root.querySelector('#lNote').value.trim().slice(0,120)};
+      if(l) Object.assign(l, data);
+      else DB.loans.push(Object.assign({id:uid('loan'), repayments:[], createdAt:new Date().toISOString()}, data));
+      saveDB(); closeModal(); toast('Saved'); render();
+    });
+    const del = root.querySelector('#lDel');
+    if(del) del.addEventListener('click',()=>{
+      if(!confirm('Delete this loan and its repayments?')) return;
+      DB.loans = DB.loans.filter(x=>x.id!==loanId);
+      saveDB(); closeModal(); toast('Deleted'); render();
+    });
+  }});
+}
+
+function openLoanDetail(id){
+  const l = (DB.loans||[]).find(x=>x.id===id);
+  if(!l) return;
+  const lent = loanDir(l)==='lent', out = loanOutstanding(l), paid = round2(loanPaid(l));
+  const reps = repsOf(l).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  openModal(`
+    ${modalHead(escapeHTML(l.person||'?'))}
+    <div class="page-sub" style="margin-bottom:10px;">${lent?'You lent':'You borrowed'} ${fmtMoney(l.amount)} on ${shortDate(l.date)}${l.dueDate?' · due '+shortDate(l.dueDate):''}${l.note?' · '+escapeHTML(l.note):''}</div>
+    <div class="grid2" style="margin-bottom:12px;">
+      <div class="stat"><div class="num">${fmtMoney(paid)}</div><div class="lbl">Repaid</div></div>
+      <div class="stat ${out>0?'hot':''}"><div class="num">${fmtMoney(out)}</div><div class="lbl">${out>0?'Still outstanding':'Fully settled'}</div></div>
+    </div>
+    ${reps.length ? `<div class="card-title">Repayments</div>${reps.map(r=>`<div class="two-col-item"><span>${shortDate(r.date)}</span><span><b>${fmtMoney(r.amount)}</b> <button class="btn sm ghost" data-del-rep="${escapeHTML(r.id)}">✕</button></span></div>`).join('')}` : ''}
+    ${out>0 ? `
+    <div class="card-title" style="margin-top:14px;">${lent?'They paid you back':'You paid back'}</div>
+    <div class="grid2">
+      <div class="field"><label>Amount (৳)</label><input id="rAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="max ${out}"></div>
+      <div class="field"><label>Date</label><input id="rDate" type="date" value="${todayISO()}"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn primary" id="rAdd">Add repayment</button><button class="btn" id="rAll">Mark fully settled</button></div>` : ''}
+    <div class="modal-actions" style="margin-top:14px;"><button class="btn" id="lEdit">Edit loan</button></div>
+  `, {onMount: root=>{
+    const addRep = (amount, date)=>{
+      l.repayments = repsOf(l).slice();
+      l.repayments.push({id:uid('rep'), date, amount:round2(amount)});
+      saveDB(); render(); toast('Repayment saved'); openLoanDetail(id);
+    };
+    root.querySelectorAll('[data-del-rep]').forEach(b=>b.addEventListener('click',()=>{
+      if(!confirm('Delete this repayment?')) return;
+      l.repayments = repsOf(l).filter(r=>r.id!==b.dataset.delRep);
+      saveDB(); render(); openLoanDetail(id);
+    }));
+    const add = root.querySelector('#rAdd');
+    if(add){
+      add.addEventListener('click',()=>{
+        const r = safeCalc(root.querySelector('#rAmt').value), date = root.querySelector('#rDate').value;
+        if(!r.ok || !(r.value>0)){ toast('Enter a valid amount'); return; }
+        if(round2(r.value)>out){ toast(`That is more than the ${fmtMoney(out)} outstanding`); return; }
+        if(!okISO(date)){ toast('Pick a date'); return; }
+        addRep(r.value, date);
+      });
+      root.querySelector('#rAll').addEventListener('click',()=>addRep(out, todayISO()));
+    }
+    root.querySelector('#lEdit').addEventListener('click',()=>{ closeModal(); openLoanForm(id); });
+  }});
+}
+
+/* ---------- Savings tab ---------- */
+function moneySavingsHTML(){
+  const pots = DB.savingPots||[];
+  return `
+  <div class="card">
+    <div class="stat hot"><div class="num">${fmtMoney(savingsTotal())}</div><div class="lbl">Total savings — kept separate, not counted as cash</div></div>
+    <button class="btn block" id="spNew" style="margin-top:12px;">+ New savings pot</button>
+  </div>
+  ${pots.length===0 ? `<div class="empty">No savings pots yet. A pot is anything you keep aside that isn't cash in hand — DPS, a bank account, gold, a savings group.</div>` : pots.map(p=>{
+    const tx = (DB.savingTx||[]).filter(t=>t.potId===p.id).sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,3);
+    return `<div class="card">
+      <div class="row"><div class="card-title" style="margin:0;">${escapeHTML(p.name)}</div><b>${fmtMoney(potBalance(p.id))}</b></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
+        <button class="btn sm" data-sp-in="${escapeHTML(p.id)}">+ Deposit</button>
+        <button class="btn sm" data-sp-out="${escapeHTML(p.id)}">− Withdraw</button>
+        <button class="btn sm ghost" data-sp-hist="${escapeHTML(p.id)}">History</button>
+        <button class="btn sm ghost" data-sp-edit="${escapeHTML(p.id)}">Edit</button>
+      </div>
+      ${tx.map(t=>`<div class="two-col-item"><span>${shortDate(t.date)}${t.opening?' · opening balance':''}${t.note?' · '+escapeHTML(t.note):''}</span><b class="${t.type==='out'?'':'pos'}">${t.type==='out'?'−':'+'}${fmtMoney(t.amount)}</b></div>`).join('')}
+    </div>`;
+  }).join('')}`;
+}
+
+function openPotForm(potId){
+  const p = potId ? (DB.savingPots||[]).find(x=>x.id===potId) : null;
+  if(potId && !p) return;
+  openModal(`
+    ${modalHead(p?'Edit pot':'New savings pot')}
+    <div class="field"><label>Name</label><input id="pName" maxlength="40" placeholder="e.g. DPS, Bank, Gold" value="${escapeHTML(p?p.name:'')}"></div>
+    ${p ? '' : `<div class="field"><label>Balance it already has (optional)</label><input id="pOpen" type="text" inputmode="decimal" autocomplete="off" placeholder="0"><div class="hint">Counted in your total, but not as money saved "this month".</div></div>`}
+    <div class="modal-actions">${p?`<button class="btn danger" id="pDel">Delete pot</button>`:''}<button class="btn primary" id="pSave">Save</button></div>
+  `, {center:true, onMount: root=>{
+    root.querySelector('#pSave').addEventListener('click',()=>{
+      const name = root.querySelector('#pName').value.trim().slice(0,40);
+      if(!name){ toast('Give the pot a name'); return; }
+      if((DB.savingPots||[]).some(x=>x.id!==potId && x.name.toLowerCase()===name.toLowerCase())){ toast('You already have a pot with that name'); return; }
+      if(p){ p.name = name; }
+      else {
+        const open = root.querySelector('#pOpen').value.trim();
+        let amt = 0;
+        if(open){ const r = safeCalc(open); if(!r.ok || r.value<0 || r.value>1e9){ toast('Opening balance is not valid'); return; } amt = round2(r.value); }
+        const np = {id:uid('pot'), name, createdAt:new Date().toISOString()};
+        DB.savingPots.push(np);
+        if(amt>0) DB.savingTx.push({id:uid('stx'), potId:np.id, date:todayISO(), amount:amt, type:'in', opening:true, note:'', createdAt:new Date().toISOString()});
+      }
+      saveDB(); closeModal(); toast('Saved'); render();
+    });
+    const del = root.querySelector('#pDel');
+    if(del) del.addEventListener('click',()=>{
+      if(!confirm(`Delete "${p.name}" and its whole history? Balance now: ${fmtMoney(potBalance(p.id))}`)) return;
+      DB.savingPots = DB.savingPots.filter(x=>x.id!==potId);
+      DB.savingTx = DB.savingTx.filter(t=>t.potId!==potId);
+      saveDB(); closeModal(); toast('Pot deleted'); render();
+    });
+  }});
+}
+
+function openSavingTx(potId, type){
+  const p = (DB.savingPots||[]).find(x=>x.id===potId);
+  if(!p) return;
+  const bal = potBalance(potId);
+  openModal(`
+    ${modalHead((type==='out'?'Withdraw from ':'Deposit to ')+escapeHTML(p.name))}
+    <div class="field"><label>Amount (৳)</label><input id="tAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0">${type==='out'?`<div class="hint">Available: ${fmtMoney(bal)}</div>`:''}</div>
+    <div class="field"><label>Date</label><input id="tDate" type="date" value="${todayISO()}"></div>
+    <div class="field"><label>Note (optional)</label><input id="tNote" maxlength="120"></div>
+    <div class="modal-actions"><button class="btn primary" id="tSave">${type==='out'?'Withdraw':'Deposit'}</button></div>
+  `, {center:true, onMount: root=>{
+    const save = ()=>{
+      const r = safeCalc(root.querySelector('#tAmt').value), date = root.querySelector('#tDate').value;
+      if(!r.ok || !(r.value>0) || r.value>1e9){ toast('Enter a valid amount'); return; }
+      if(!okISO(date)){ toast('Pick a date'); return; }
+      if(type==='out' && round2(r.value)>bal){ toast(`Only ${fmtMoney(bal)} in this pot`); return; }
+      DB.savingTx.push({id:uid('stx'), potId, date, amount:round2(r.value), type, note:root.querySelector('#tNote').value.trim().slice(0,120), createdAt:new Date().toISOString()});
+      saveDB(); closeModal(); toast(type==='out'?'Withdrawn':'Deposited'); render();
+    };
+    root.querySelector('#tSave').addEventListener('click', save);
+    root.querySelector('#tAmt').addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); save(); } });
+  }});
+}
+
+function openPotHistory(potId){
+  const p = (DB.savingPots||[]).find(x=>x.id===potId);
+  if(!p) return;
+  const tx = (DB.savingTx||[]).filter(t=>t.potId===potId).sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  openModal(`
+    ${modalHead(escapeHTML(p.name)+' — history')}
+    ${tx.length===0 ? `<div class="empty">No entries.</div>` : tx.map(t=>`<div class="two-col-item"><span>${shortDate(t.date)}${t.opening?' · opening balance':''}${t.note?' · '+escapeHTML(t.note):''}</span><span><b class="${t.type==='out'?'':'pos'}">${t.type==='out'?'−':'+'}${fmtMoney(t.amount)}</b> <button class="btn sm ghost" data-del-tx="${escapeHTML(t.id)}">✕</button></span></div>`).join('')}
+    <div class="hint" style="margin-top:8px;">Balance: ${fmtMoney(potBalance(potId))}</div>
+  `, {onMount: root=>{
+    root.querySelectorAll('[data-del-tx]').forEach(b=>b.addEventListener('click',()=>{
+      const t = DB.savingTx.find(x=>x.id===b.dataset.delTx); if(!t) return;
+      if(t.type==='in' && potBalance(potId)-t.amount < 0){ toast('Deleting this deposit would make the balance negative — remove the later withdrawals first'); return; }
+      if(!confirm('Delete this entry?')) return;
+      DB.savingTx = DB.savingTx.filter(x=>x.id!==t.id);
+      saveDB(); render(); openPotHistory(potId);
+    }));
+  }});
+}
+
+/* ---------- binding ---------- */
 function bindMoney(){
   const view = document.getElementById('view');
   view.querySelectorAll('[data-money-tab]').forEach(b=>b.addEventListener('click',()=>{ moneyTab=b.dataset.moneyTab; render(); }));
   view.querySelectorAll('[data-exp-edit]').forEach(n=>n.addEventListener('click',()=>openExpenseEdit(n.dataset.expEdit)));
+  view.querySelectorAll('[data-inc-edit]').forEach(n=>n.addEventListener('click',()=>openIncomeEdit(n.dataset.incEdit)));
 
   if(moneyTab==='log'){
+    view.querySelectorAll('[data-money-mode]').forEach(b=>b.addEventListener('click',()=>{ moneyMode=b.dataset.moneyMode; render(); }));
     view.querySelectorAll('[data-money-kind]').forEach(b=>b.addEventListener('click',()=>{ moneyKind=b.dataset.moneyKind; render(); }));
     view.querySelectorAll('[data-money-cat]').forEach(b=>b.addEventListener('click',()=>{ moneyLastCat[moneyKind]=b.dataset.moneyCat; render(); }));
+    view.querySelectorAll('[data-income-src]').forEach(b=>b.addEventListener('click',()=>{ moneyIncomeSrc=b.dataset.incomeSrc; render(); }));
     const amt = view.querySelector('#mAmount'), note = view.querySelector('#mNote'), date = view.querySelector('#mDate');
     amt.addEventListener('input', ()=>{ moneyDraft.amount = amt.value; moneyHintUpdate(); });
     note.addEventListener('input', ()=>{ moneyDraft.note = note.value; });
     date.addEventListener('change', ()=>{ moneyDraft.date = date.value; });
-    [amt,note].forEach(el=>el.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); addExpenseFromForm(); } }));
-    view.querySelector('#mAdd').addEventListener('click', addExpenseFromForm);
+    [amt,note].forEach(el=>el.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); addEntryFromForm(); } }));
+    view.querySelector('#mAdd').addEventListener('click', addEntryFromForm);
     moneyHintUpdate();
   } else if(moneyTab==='month'){
     view.querySelector('#mMonth').addEventListener('change', e=>{ moneyMonth = /^\d{4}-\d{2}$/.test(e.target.value) ? e.target.value : null; render(); });
     view.querySelectorAll('[data-money-filter]').forEach(b=>b.addEventListener('click',()=>{ moneyFilter=b.dataset.moneyFilter; render(); }));
     view.querySelector('#mBudgetBtn').addEventListener('click', openBudgetModal);
+    view.querySelector('#mCarryBtn').addEventListener('click', ()=>openCarryModal(moneyMonth || todayISO().slice(0,7)));
+  } else if(moneyTab==='dhar'){
+    view.querySelector('#lNew').addEventListener('click', ()=>openLoanForm());
+    view.querySelectorAll('[data-loan]').forEach(n=>n.addEventListener('click',()=>openLoanDetail(n.dataset.loan)));
+    const st = view.querySelector('#lSettledToggle');
+    if(st) st.addEventListener('click', ()=>{ loanShowSettled = !loanShowSettled; render(); });
+  } else if(moneyTab==='savings'){
+    view.querySelector('#spNew').addEventListener('click', ()=>openPotForm());
+    view.querySelectorAll('[data-sp-in]').forEach(b=>b.addEventListener('click',()=>openSavingTx(b.dataset.spIn,'in')));
+    view.querySelectorAll('[data-sp-out]').forEach(b=>b.addEventListener('click',()=>openSavingTx(b.dataset.spOut,'out')));
+    view.querySelectorAll('[data-sp-hist]').forEach(b=>b.addEventListener('click',()=>openPotHistory(b.dataset.spHist)));
+    view.querySelectorAll('[data-sp-edit]').forEach(b=>b.addEventListener('click',()=>openPotForm(b.dataset.spEdit)));
   } else {
     const inp = view.querySelector('#cExpr');
     inp.addEventListener('input', ()=>{ calcExpr = inp.value; calcPreview(); });
@@ -1382,6 +1868,240 @@ function bindMoney(){
     calcPreview();
     calcRenderHistory();
   }
+}
+
+/* =========================================================================
+   BATCH EXAMS — enter one exam for a whole batch, marks per member.
+   Storage stays ONE ROW PER STUDENT in DB.exams (so student pages, averages and
+   reports work unchanged); rows made together share `batchExamId`, which points
+   at a header in DB.batchExams = [{id,batchId,name,subject,chapter,date,total,
+   notes,absentIds:[],createdAt}]. Absent students get no row (listed in absentIds).
+   ========================================================================= */
+function batchExamById(id){ return (DB.batchExams||[]).find(h=>h.id===id) || null; }
+// The header a row belongs to — only if its batch still exists, otherwise the row
+// is treated as a plain individual exam (nothing breaks if a batch was deleted).
+function groupedHeaderFor(e){
+  if(!e || !e.batchExamId) return null;
+  const h = batchExamById(e.batchExamId);
+  return (h && studentById(h.batchId)) ? h : null;
+}
+function batchExamRows(hid){ return DB.exams.filter(e=>e.batchExamId===hid); }
+function batchExamStats(h){
+  const rows = batchExamRows(h.id);
+  const done = rows.filter(e=>(e.status||'Completed')==='Completed');
+  const pcts = done.filter(e=>e.total>0).map(e=>e.obtained/e.total*100);
+  return {
+    present: rows.length, marked: done.length, unmarked: rows.length-done.length,
+    absent: (h.absentIds||[]).length,
+    avg: pcts.length ? Math.round(pcts.reduce((a,b)=>a+b,0)/pcts.length) : null
+  };
+}
+function examOwnerLabel(e){
+  const h = groupedHeaderFor(e);
+  if(h) return studentById(h.batchId).name;
+  const st = studentById(e.studentId);
+  return st ? st.name : '?';
+}
+function examStatusLabel(e){
+  const h = groupedHeaderFor(e);
+  if(!h) return e.status||'Completed';
+  const s = batchExamStats(h);
+  return s.marked===0 ? 'Scheduled' : `${s.marked}/${s.present} marked`;
+}
+function batchUnmarkedNote(e){
+  const h = groupedHeaderFor(e);
+  if(!h) return '';
+  const s = batchExamStats(h);
+  return ` · ${s.unmarked} of ${s.present} not marked`;
+}
+// One entry per batch exam (first row stands in for the group); individual rows untouched.
+function dedupeBatchExams(list){
+  const seen = {};
+  return list.filter(e=>{
+    const h = groupedHeaderFor(e);
+    if(!h) return true;
+    if(seen[h.id]) return false;
+    seen[h.id] = 1;
+    return true;
+  });
+}
+function examCountUnique(list){
+  const seen = {};
+  list.forEach(e=>{ seen[groupedHeaderFor(e) ? 'b_'+e.batchExamId : 'e_'+e.id] = 1; });
+  return Object.keys(seen).length;
+}
+function batchExamItemHTML(h){
+  const b = studentById(h.batchId), st = batchExamStats(h);
+  const dot = st.marked===0 ? 'var(--amber)' : st.avg>=60 ? 'var(--ok)' : st.avg>=40 ? 'var(--amber)' : 'var(--err)';
+  const meta = st.marked===0
+    ? `${st.present} student${st.present===1?'':'s'} · Scheduled`
+    : `${st.marked}/${st.present} marked · avg ${st.avg===null?'—':st.avg+'%'}`;
+  return `<div class="item" data-open-batch-exam="${escapeHTML(h.id)}" style="cursor:pointer;">
+      <div class="dot" style="background:${dot}"></div>
+      <div class="body"><div class="title">${escapeHTML(h.name)} — 👥 ${escapeHTML(b?b.name:'?')}</div><div class="meta">${escapeHTML(h.subject)} · ${h.date} · ${meta}${st.absent?` · ${st.absent} absent`:''}</div></div>
+      <div class="chev">›</div>
+    </div>`;
+}
+function bindBatchExamLinks(root){
+  root.querySelectorAll('[data-open-batch-exam]').forEach(el=>el.addEventListener('click',()=>{
+    const h = batchExamById(el.dataset.openBatchExam);
+    if(h) openBatchExamForm(h.batchId, h.id);
+  }));
+}
+
+function openBatchExamForm(batchId, headerId, prefill){
+  const batch = studentById(batchId);
+  if(!batch) return;
+  const header = headerId ? batchExamById(headerId) : null;
+  prefill = prefill || {};
+  const rows = header ? batchExamRows(header.id) : [];
+  const rowBy = {}; rows.forEach(r=>{ rowBy[r.studentId] = r; });
+  const absent = new Set(header ? (header.absentIds||[]) : []);
+  // Active members, plus anyone already part of this exam (ex-member, paused member).
+  const ids = new Set(batchMembers(batchId).filter(s=>s.active!==false).map(s=>s.id));
+  rows.forEach(r=>ids.add(r.studentId));
+  absent.forEach(id=>ids.add(id));
+  const people = [...ids].map(studentById).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name));
+  if(people.length===0){ toast('This batch has no active members yet'); return; }
+
+  const v = {
+    name: header ? header.name : (prefill.name||''),
+    subject: header ? header.subject : (prefill.subject||DB.subjects[0]||''),
+    chapter: header ? (header.chapter||'') : (prefill.chapter||''),
+    date: header ? header.date : (prefill.date||todayISO()),
+    total: header ? header.total : (prefill.total>0 ? prefill.total : 100),
+    notes: header ? (header.notes||'') : (prefill.notes||'')
+  };
+  const subjects = DB.subjects.slice(); if(v.subject && subjects.indexOf(v.subject)<0) subjects.unshift(v.subject);
+
+  openModal(`
+    ${modalHead(header ? 'Edit Batch Exam' : 'Batch Exam')}
+    <div class="page-sub" style="margin-bottom:10px;">👥 ${escapeHTML(batch.name)} · ${people.length} student${people.length===1?'':'s'}</div>
+    <div class="field"><label>Exam name</label><input id="be_name" placeholder="e.g. Weekly Test" value="${escapeHTML(v.name)}"></div>
+    <div class="grid2">
+      <div class="field"><label>Subject</label><select id="be_subject">${subjects.map(sub=>`<option ${sub===v.subject?'selected':''}>${escapeHTML(sub)}</option>`).join('')}</select></div>
+      <div class="field"><label>Total marks</label><input type="number" id="be_total" min="1" step="any" value="${escapeHTML(String(v.total))}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Chapter (optional)</label><input id="be_chapter" value="${escapeHTML(v.chapter)}"></div>
+      <div class="field"><label>Date</label><input type="date" id="be_date" value="${escapeHTML(v.date)}"></div>
+    </div>
+    <div class="field">
+      <label>Marks — leave blank if not marked yet</label>
+      <div id="beRows">
+        ${people.map(p=>{
+          const r = rowBy[p.id];
+          const val = (r && (r.status||'Completed')==='Completed') ? String(r.obtained) : '';
+          const isAbs = absent.has(p.id);
+          return `<div class="be-row ${isAbs?'abs':''}" data-sid="${escapeHTML(p.id)}">
+            <span class="be-name">${escapeHTML(p.name)}</span>
+            <span class="be-in"><input type="number" class="be-ob" inputmode="decimal" min="0" step="any" value="${escapeHTML(val)}" ${isAbs?'disabled':''}><span class="be-of">/ <span class="be-tot">${escapeHTML(String(v.total))}</span></span></span>
+            <label class="be-abs"><input type="checkbox" class="be-cb" ${isAbs?'checked':''}> Absent</label>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="hint" id="beSummary"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="be_notes">${escapeHTML(v.notes)}</textarea></div>
+    <div class="modal-actions">
+      ${header?`<button class="btn danger" id="beDel">Delete</button>`:''}
+      <button class="btn primary" id="beSave">${header?'Save Changes':'Save Batch Exam'}</button>
+    </div>
+  `, {onMount: root=>{
+    const q = s=>root.querySelector(s), qa = s=>[...root.querySelectorAll(s)];
+    function summary(){
+      const total = Number(q('#be_total').value)||0;
+      let marked = 0, present = 0, abs = 0, sum = 0;
+      qa('.be-row').forEach(row=>{
+        if(row.querySelector('.be-cb').checked){ abs++; return; }
+        present++;
+        const t = row.querySelector('.be-ob').value.trim();
+        if(t!=='' && isFinite(Number(t))){ marked++; if(total>0) sum += Number(t)/total*100; }
+      });
+      q('#beSummary').textContent = `Marked ${marked} of ${present}` + (marked && total>0 ? ` · average ${Math.round(sum/marked)}%` : '') + (abs ? ` · ${abs} absent` : '');
+    }
+    q('#be_total').addEventListener('input', ()=>{ qa('.be-tot').forEach(n=>n.textContent = q('#be_total').value); summary(); });
+    qa('.be-ob').forEach((inp,i,all)=>{
+      inp.addEventListener('input', summary);
+      inp.addEventListener('keydown', ev=>{
+        if(ev.key!=='Enter') return;
+        ev.preventDefault();
+        const next = all.slice(i+1).find(x=>!x.disabled);
+        if(next) next.focus(); else q('#beSave').click();     // Enter walks down the list; on the last one it saves
+      });
+    });
+    qa('.be-cb').forEach(cb=>cb.addEventListener('change', ()=>{
+      const row = cb.closest('.be-row'), inp = row.querySelector('.be-ob');
+      row.classList.toggle('abs', cb.checked);
+      inp.disabled = cb.checked;
+      if(cb.checked) inp.value = '';
+      summary();
+    }));
+    summary();
+
+    q('#beSave').addEventListener('click', ()=>{
+      const name = q('#be_name').value.trim();
+      const total = Number(q('#be_total').value);
+      const date = q('#be_date').value;
+      if(!name){ toast('Exam name is required'); q('#be_name').focus(); return; }
+      if(!(total>0)){ toast('Total marks must be more than 0'); q('#be_total').focus(); return; }
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){ toast('Pick a date'); return; }
+      const entries = [];
+      for(const row of qa('.be-row')){
+        const sid = row.dataset.sid, p = studentById(sid);
+        if(row.querySelector('.be-cb').checked){ entries.push({sid, absent:true}); continue; }
+        const inp = row.querySelector('.be-ob'), t = inp.value.trim();
+        if(t===''){ entries.push({sid, marked:false}); continue; }
+        const n = Number(t);
+        if(!isFinite(n) || n<0 || n>total){ toast(`${escapeHTML(p?p.name:'Student')}: marks must be between 0 and ${total}`); inp.focus(); return; }
+        entries.push({sid, marked:true, n});
+      }
+      const meta = {name, subject:q('#be_subject').value, chapter:q('#be_chapter').value.trim(), date, total};
+      const notes = q('#be_notes').value.trim();
+      DB.batchExams = DB.batchExams || [];
+      let h = header;
+      if(!h){ h = {id:uid('bex'), batchId, createdAt:new Date().toISOString()}; DB.batchExams.push(h); }
+      Object.assign(h, meta, {notes, absentIds: entries.filter(x=>x.absent).map(x=>x.sid)});
+      const absentSet = new Set(h.absentIds);
+      DB.exams = DB.exams.filter(e=>!(e.batchExamId===h.id && absentSet.has(e.studentId)));
+      entries.forEach(en=>{
+        if(en.absent) return;
+        const fields = {status: en.marked?'Completed':'Scheduled', obtained: en.marked?en.n:0};
+        const ex = DB.exams.find(e=>e.batchExamId===h.id && e.studentId===en.sid);
+        if(ex) Object.assign(ex, meta, fields);                                        // keeps the row's own notes
+        else DB.exams.push(Object.assign({id:uid('exam'), studentId:en.sid, batchExamId:h.id, notes}, meta, fields));
+      });
+      const st = batchExamStats(h);
+      saveDB(); closeModal(); render();
+      toast(`Saved — ${st.marked} of ${st.present} marked`);
+    });
+    const del = q('#beDel');
+    if(del) del.addEventListener('click', ()=>{
+      const n = batchExamRows(header.id).length;
+      if(!confirm(`Delete this exam and the results of ${n} student${n===1?'':'s'}?`)) return;
+      DB.exams = DB.exams.filter(e=>e.batchExamId!==header.id);
+      DB.batchExams = DB.batchExams.filter(x=>x.id!==header.id);
+      saveDB(); closeModal(); render(); toast('Batch exam deleted');
+    });
+  }});
+}
+
+function batchExamsFor(batchId){
+  return (DB.batchExams||[]).filter(h=>h.batchId===batchId).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+}
+function batchExamsSectionHTML(batchId){
+  const hs = batchExamsFor(batchId);
+  return hs.length ? `<div class="card"><div class="card-title">Batch exams</div><div class="list">${hs.map(batchExamItemHTML).join('')}</div></div>` : '';
+}
+// Options for the "Student" dropdown of the global Add Exam form: individuals first
+// (a batch container is not a valid target for one student's marks), whole batches after.
+function examStudentOptionsHTML(existing){
+  const groups = DB.students.filter(s=>s.isGroup && batchMembers(s.id).length>0);
+  const gset = new Set(groups.map(g=>g.id));
+  const indiv = existing ? DB.students : DB.students.filter(s=>!gset.has(s.id));
+  const opt = s=>`<option value="${s.id}" ${existing&&existing.studentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`;
+  if(existing || groups.length===0) return indiv.map(opt).join('');
+  return `<optgroup label="Individual student">${indiv.map(opt).join('')}</optgroup><optgroup label="Whole batch (all members)">${groups.map(g=>`<option value="batch:${g.id}">👥 ${escapeHTML(g.name)} (${batchMembers(g.id).filter(m=>m.active!==false).length} students)</option>`).join('')}</optgroup>`;
 }
 
 function render(){
@@ -1532,7 +2252,7 @@ function upcomingExams(days){
   const limitISO = limit.toISOString().slice(0,10);
   // "Upcoming" = scheduled and not yet marked — old records with no status field
   // already have marks, so they default to Completed and are excluded here.
-  return DB.exams.filter(e=>e.date>=today && e.date<=limitISO && (e.status||'Completed')!=='Completed').sort((a,b)=>a.date.localeCompare(b.date));
+  return dedupeBatchExams(DB.exams.filter(e=>e.date>=today && e.date<=limitISO && (e.status||'Completed')!=='Completed').sort((a,b)=>a.date.localeCompare(b.date)));
 }
 function awaitingResultsExams(){
   // Exam date has already passed (or is today) but marks were never entered —
@@ -1542,7 +2262,7 @@ function awaitingResultsExams(){
   // field itself is stuck on "Scheduled" from before this check existed —
   // so an already-graded exam doesn't keep reappearing here.
   const today = todayISO();
-  return DB.exams.filter(e=>e.date<=today && (e.status||'Completed')==='Scheduled' && !(Number(e.obtained)>0)).sort((a,b)=>a.date.localeCompare(b.date));
+  return dedupeBatchExams(DB.exams.filter(e=>e.date<=today && (e.status||'Completed')==='Scheduled' && !(Number(e.obtained)>0)).sort((a,b)=>a.date.localeCompare(b.date)));
 }
 function unpaidFeesCount(monthISO){
   return feeTrackedStudents().filter(s=>s.monthlyFee>0).filter(s=>{
@@ -1803,7 +2523,7 @@ function renderDashboard(){
         const st = studentById(e.studentId);
         return `<div class="item" style="cursor:pointer;" data-add-marks="${e.studentId}|${e.id}">
           <div class="dot" style="background:var(--err);"></div>
-          <div class="body"><div class="title">${escapeHTML(e.name)} — ${st?escapeHTML(st.name):'?'}</div><div class="meta">${escapeHTML(e.subject)} · was ${e.date}</div></div>
+          <div class="body"><div class="title">${escapeHTML(e.name)} — ${groupedHeaderFor(e)?'👥 ':''}${escapeHTML(examOwnerLabel(e))}</div><div class="meta">${escapeHTML(e.subject)} · was ${e.date}${batchUnmarkedNote(e)}</div></div>
           <div class="chev">›</div>
         </div>`;
       }).join('')}
@@ -2008,7 +2728,8 @@ function bindDashboard(){
   document.getElementById('view').querySelectorAll('[data-add-marks]').forEach(el=>{
     el.addEventListener('click',()=>{
       const [sid,eid] = el.dataset.addMarks.split('|');
-      openExamForm(sid, eid, true);
+      const _ex = DB.exams.find(x=>x.id===eid), _h = _ex && groupedHeaderFor(_ex);
+      if(_h) openBatchExamForm(_h.batchId, _h.id); else openExamForm(sid, eid, true);
     });
   });
 }
@@ -2033,7 +2754,7 @@ let todayEditMode = false;
 function renderToday(){
   const {items, conflict} = buildDaySchedule(todayISOState, todayMaghribInfo.maghrib);
   const nowMin = todayISOState===todayISO() ? nowMinutes() : -1;
-  const examsToday = DB.exams.filter(e=>e.date===todayISOState);
+  const examsToday = dedupeBatchExams(DB.exams.filter(e=>e.date===todayISOState));
 
   if(todayEditMode) return renderScheduleEditor();
 
@@ -2043,7 +2764,7 @@ function renderToday(){
   // merge exams into the visual timeline as extra rows, sorted by time
   const examRows = examsToday.map(e=>{
     const st = studentById(e.studentId);
-    return {isExam:true, exam:e, title:`Exam: ${e.name}`, note:`${e.subject}${st?' · '+st.name:''} · ${e.status||'Completed'}`, timeLabel: 'Exam'};
+    return {isExam:true, exam:e, title:`Exam: ${e.name}`, note:`${e.subject}${(groupedHeaderFor(e)||st)?' · '+examOwnerLabel(e):''} · ${examStatusLabel(e)}`, timeLabel: 'Exam'};
   });
 
   let offBanner = '';
@@ -2196,7 +2917,7 @@ function bindToday(){
   view.querySelectorAll('[data-open-exam]').forEach(el=>{
     el.addEventListener('click',()=>{
       const exam = DB.exams.find(x=>x.id===el.dataset.openExam);
-      if(exam) openExamForm(exam.studentId, exam.id);
+      if(exam){ const _h = groupedHeaderFor(exam); if(_h) openBatchExamForm(_h.batchId, _h.id); else openExamForm(exam.studentId, exam.id); }
     });
   });
   view.querySelectorAll('[data-nav-page]').forEach(el=>{
@@ -2869,7 +3590,8 @@ function studentExamsTab(s){
   return `
   <button class="btn primary block" data-add-exam="${s.id}" style="margin-bottom:12px;">+ Add / Schedule Exam</button>
   ${avg!==null?`<div class="card"><div class="card-title">Average (completed exams)</div><div style="font-family:'Fraunces',serif;font-size:26px;">${avg}%</div></div>`:''}
-  ${exams.length===0? `<div class="empty">No exams recorded.</div>` : `<div class="list">${exams.map(e=>{
+  ${s.isGroup?batchExamsSectionHTML(s.id):''}
+  ${exams.length===0? (s.isGroup&&batchExamsFor(s.id).length?'':`<div class="empty">No exams recorded.</div>`) : `<div class="list">${exams.map(e=>{
     const isScheduled = (e.status||'Completed')==='Scheduled';
     const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
     return `<div class="item" style="cursor:pointer;" data-edit-exam="${e.id}">
@@ -2998,6 +3720,7 @@ function bindStudentDetail(id){
   const attCalBtn = view.querySelector('[data-open-att-calendar]');
   if(attCalBtn) attCalBtn.addEventListener('click', ()=>openAttendanceCalendar(attCalBtn.dataset.openAttCalendar));
   const ae = view.querySelector('[data-add-exam]'); if(ae) ae.addEventListener('click',()=>openExamForm(id));
+  bindBatchExamLinks(view);
   view.querySelectorAll('[data-edit-exam]').forEach(el=>el.addEventListener('click',()=>openExamForm(id, el.dataset.editExam)));
   view.querySelectorAll('[data-mark-paid]').forEach(el=>el.addEventListener('click',()=>{
     const [sid,month]=el.dataset.markPaid.split('|');
@@ -3095,12 +3818,24 @@ function bindStudy(){
    EXAMS (global)
    ========================================================================= */
 function renderExams(){
-  const exams = DB.exams.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  // Batch exams collapse to ONE line; individual exams render exactly as before.
+  const seen = new Set(), entries = [];
+  DB.exams.forEach(e=>{
+    const h = groupedHeaderFor(e);
+    if(h){ if(seen.has(h.id)) return; seen.add(h.id); entries.push({date:h.date, h}); }
+    else entries.push({date:e.date, e});
+  });
+  (DB.batchExams||[]).forEach(h=>{            // a batch exam where everyone was absent has no rows
+    if(!seen.has(h.id) && studentById(h.batchId)){ seen.add(h.id); entries.push({date:h.date, h}); }
+  });
+  entries.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
   return `
   <button class="btn primary block" id="addExamGlobalBtn" style="margin-bottom:12px;">+ Add / Schedule Exam</button>
-  ${exams.length===0? `<div class="empty"><div class="big">📝</div>No exams recorded yet.</div>` : `
+  ${entries.length===0? `<div class="empty"><div class="big">📝</div>No exams recorded yet.</div>` : `
   <div class="list">
-  ${exams.map(e=>{
+  ${entries.map(en=>{
+    if(en.h) return batchExamItemHTML(en.h);
+    const e = en.e;
     const st = studentById(e.studentId);
     const isScheduled = (e.status||'Completed')==='Scheduled';
     const pct = e.total>0?Math.round(e.obtained/e.total*100):0;
@@ -3116,6 +3851,7 @@ function renderExams(){
 function bindExams(){
   const view = document.getElementById('view');
   document.getElementById('addExamGlobalBtn').addEventListener('click',()=>openExamForm());
+  bindBatchExamLinks(view);
   view.querySelectorAll('[data-edit-exam-global]').forEach(el=>el.addEventListener('click',()=>{
     const [sid,eid] = el.dataset.editExamGlobal.split('|');
     openExamForm(sid, eid);
@@ -3173,7 +3909,7 @@ function bindFees(){
 function renderReports(){
   const month = todayISO().slice(0,7);
   const classesTaken = DB.classRecords.filter(r=>r.date.startsWith(month)).length;
-  const examsThisMonth = DB.exams.filter(e=>e.date.startsWith(month)).length;
+  const examsThisMonth = examCountUnique(DB.exams.filter(e=>e.date.startsWith(month)));
 
   // Split by source. Madrasa-type students are pulled out FIRST, by type,
   // regardless of group membership — a madrasa student can be part of a
@@ -4114,12 +4850,14 @@ function openFeeEditForm(studentId, month){
 
 /* ---------- Exam form ---------- */
 function openExamForm(studentId, examId, forMarksEntry){
+  // A batch container can't hold one student's marks — send it to the batch table instead.
+  if(!examId && studentId){ const _g = studentById(studentId); if(_g && _g.isGroup && batchMembers(_g.id).length) return openBatchExamForm(_g.id); }
   const students = DB.students;
   const existing = examId ? DB.exams.find(e=>e.id===examId) : null;
   const status0 = forMarksEntry ? 'Completed' : (existing ? (existing.status||'Completed') : 'Scheduled');
   openModal(`
     ${modalHead(existing? 'Edit Exam' : 'Add Exam')}
-    ${!studentId? `<div class="field"><label>Student</label><select id="e_student">${students.map(s=>`<option value="${s.id}" ${existing&&existing.studentId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`).join('')}</select></div>`:''}
+    ${!studentId? `<div class="field"><label>Student</label><select id="e_student">${examStudentOptionsHTML(existing)}</select></div>`:''}
     <div class="field"><label>Exam name</label><input id="e_name" placeholder="e.g. Weekly Test" value="${existing?escapeHTML(existing.name):''}"></div>
     <div class="field"><label>Subject</label><select id="e_subject">${DB.subjects.map(sub=>`<option ${existing&&existing.subject===sub?'selected':''}>${escapeHTML(sub)}</option>`).join('')}</select></div>
     <div class="field"><label>Chapter (optional)</label><input id="e_chapter" value="${existing?escapeHTML(existing.chapter||''):''}"></div>
@@ -4141,11 +4879,23 @@ function openExamForm(studentId, examId, forMarksEntry){
       <button class="btn primary" id="saveExamBtn">${existing?'Save Changes':'Save Exam'}</button>
     </div>
   `,{onMount:(root)=>{
+    // Picking "Whole batch" hands the typed details over to the batch table.
+    const sSel = root.querySelector('#e_student');
+    const toBatch = ()=>{
+      if(!sSel || sSel.value.indexOf('batch:')!==0) return false;
+      const g = id=>root.querySelector(id);
+      const prefill = {name:g('#e_name').value.trim(), subject:g('#e_subject').value, chapter:g('#e_chapter').value.trim(), date:g('#e_date').value, total:Number(g('#e_total').value)||0, notes:g('#e_notes').value.trim()};
+      const bid = sSel.value.slice(6);
+      closeModal(); openBatchExamForm(bid, null, prefill);
+      return true;
+    };
+    if(sSel) sSel.addEventListener('change', toBatch);
     root.querySelector('#e_obtained').addEventListener('input', (e)=>{
       if(Number(e.target.value) > 0){ root.querySelector('#e_status').value = 'Completed'; }
     });
     if(forMarksEntry) root.querySelector('#e_obtained').focus();
     root.querySelector('#saveExamBtn').addEventListener('click',()=>{
+      if(!studentId && toBatch()) return;
       const sid = studentId || root.querySelector('#e_student').value;
       const name = root.querySelector('#e_name').value.trim();
       if(!name || !sid){ alert('Exam name and student are required'); return; }
@@ -4162,7 +4912,7 @@ function openExamForm(studentId, examId, forMarksEntry){
     });
     const del = root.querySelector('#delExamBtn');
     if(del) del.addEventListener('click',()=>{
-      if(confirm('Delete this exam?')){ DB.exams = DB.exams.filter(x=>x.id!==existing.id); saveDB(); closeModal(); render(); toast('Exam deleted'); }
+      if(confirm('Delete this exam?')){ const _h = groupedHeaderFor(existing); if(_h && (_h.absentIds||[]).indexOf(existing.studentId)<0) _h.absentIds = (_h.absentIds||[]).concat(existing.studentId); DB.exams = DB.exams.filter(x=>x.id!==existing.id); saveDB(); closeModal(); render(); toast('Exam deleted'); }
     });
   }});
 }

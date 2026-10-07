@@ -292,6 +292,21 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 /* ---------- Money section ---------- */
 .pos{color:var(--ok);}
 .plan-hint{font-size:12px;color:var(--ink-faint);margin-top:8px;line-height:1.45;}
+/* ---------- Money summary strip ---------- */
+.money-strip{padding:14px;}
+.strip-head{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;margin-bottom:10px;}
+.strip-main{display:block;width:100%;text-align:left;background:rgba(224,162,89,.1);border:1px solid var(--amber);border-radius:14px;padding:14px 16px;color:inherit;font:inherit;cursor:pointer;}
+.strip-main.neg{border-color:var(--err);background:rgba(224,96,96,.1);}
+.strip-big{font-family:'Fraunces',serif;font-size:34px;line-height:1.1;color:var(--amber-soft);}
+.strip-main.neg .strip-big{color:var(--err);}
+.strip-lbl{font-size:13px;color:var(--ink-faint);margin-top:2px;}
+.strip-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px;}
+.strip-row.three{grid-template-columns:repeat(3,minmax(0,1fr));}
+.strip-cell{display:block;text-align:left;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:inherit;font:inherit;cursor:pointer;min-width:0;}
+.strip-cell b{display:block;font-size:16px;overflow-wrap:anywhere;}
+.strip-cell span{display:block;font-size:11.5px;color:var(--ink-faint);margin-top:2px;}
+@media (hover:hover){.strip-cell:hover,.strip-main:hover{border-color:var(--amber);}}
+
 .money-cols{display:block;}
 .keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;max-width:360px;}
 .keypad .btn{padding:14px 0;font-size:17px;}
@@ -352,7 +367,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-06.1';
+const APP_BUILD = '2026-10-07.1';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -1060,10 +1075,9 @@ function expensesFor(ym, kind){
 }
 function sumAmt(list){ return round2(list.reduce((a,e)=>a+(Number(e.amount)||0),0)); }
 function daysInMonthYM(ym){ const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
-// Fees actually received in a month, by payment date (not by the month the fee is for).
+// Tuition actually received in a month, by the date each PAYMENT was recorded (not the month the fee is for).
 function feesReceivedIn(ym){
-  return (DB.fees||[]).filter(f=>f.paymentDate && String(f.paymentDate).slice(0,7)===ym)
-    .reduce((a,f)=>a+(Number(f.paid)||0),0);
+  return round2(feePaymentsIn(ym).reduce((a,p)=>a+p.amount,0));
 }
 function expDayLabel(iso){
   const t = todayISO();
@@ -1255,6 +1269,64 @@ function shortDate(iso){ return okISO(iso) ? new Date(iso+'T12:00:00').toLocaleD
 function incomesFor(ym){ return (DB.incomes||[]).filter(i=>monthOf(i.date)===ym); }
 function incomeSourceDefault(){ return INCOME_SOURCES.indexOf(moneyIncomeSrc)>=0 ? moneyIncomeSrc : INCOME_SOURCES[0]; }
 
+/* ---- tuition: payment history inside each fee record ----
+   fee.payments = [{date,amount}] is ADDITIVE: fee.paid / fee.paymentDate stay exactly as before
+   (everything else in the app reads those). Old records have no `payments`; they are derived on
+   read as one payment of `paid` on `paymentDate`, so nothing needs migrating. */
+function feePayments(f){
+  const paid = round2(Number(f && f.paid) || 0);
+  const lastDate = f && okISO(f.paymentDate) ? f.paymentDate : '';
+  let pays = (f && Array.isArray(f.payments))
+    ? f.payments.filter(p=>p && Number(p.amount)>0).map(p=>({date: okISO(p.date)?p.date:'', amount: round2(Number(p.amount))}))
+    : null;
+  if(pays===null) pays = paid>0 ? [{date:lastDate, amount:paid}] : [];
+  let sum = round2(pays.reduce((a,p)=>a+p.amount,0));
+  if(sum<paid) pays.push({date:lastDate, amount:round2(paid-sum)});          // `paid` was changed by something that doesn't know about payments
+  else if(sum>paid){                                                          // …or lowered: trim the newest payments
+    let over = round2(sum-paid);
+    for(let i=pays.length-1;i>=0 && over>0;i--){ const cut = Math.min(pays[i].amount, over); pays[i].amount = round2(pays[i].amount-cut); over = round2(over-cut); }
+    pays = pays.filter(p=>p.amount>0);
+  }
+  return pays;
+}
+// Every payment received in month `ym`. A payment with no date is counted in the month its fee belongs to.
+function feePaymentsIn(ym){
+  const out = [];
+  (DB.fees||[]).forEach(f=>{
+    if(!f) return;
+    feePayments(f).forEach(p=>{
+      const date = p.date || (f.month ? f.month+'-01' : '');
+      if(monthOf(date)===ym) out.push({studentId:f.studentId, feeMonth:f.month, date, amount:p.amount, guessed:!p.date});
+    });
+  });
+  return out;
+}
+function addFeePayment(f, amount, date){            // "Record payment": adds to what was already paid
+  const pays = feePayments(f);
+  pays.push({date, amount:round2(amount)});
+  f.payments = pays;
+  f.paid = round2(pays.reduce((a,p)=>a+p.amount,0));
+  f.paymentDate = date;
+}
+function setFeePaid(f, total, date){                // "Mark paid" / "Correct": set the total paid
+  const pays = feePayments(f);
+  const sum = round2(pays.reduce((a,p)=>a+p.amount,0));
+  total = Math.max(0, round2(Number(total)||0));
+  if(total>sum) pays.push({date:date||'', amount:round2(total-sum)});
+  else if(total<sum){
+    let over = round2(sum-total);
+    for(let i=pays.length-1;i>=0 && over>0;i--){ const cut = Math.min(pays[i].amount, over); pays[i].amount = round2(pays[i].amount-cut); over = round2(over-cut); }
+  } else if(date && pays.length){ pays[pays.length-1].date = date; }          // same total: only the date was corrected
+  f.payments = pays.filter(p=>p.amount>0);
+  f.paid = total;
+  f.paymentDate = date;                                                        // exactly what the caller asked for (null allowed)
+}
+function loanTotals(){
+  let owed = 0, owe = 0;
+  (DB.loans||[]).forEach(l=>{ const o = loanOutstanding(l); if(loanDir(l)==='lent') owed += o; else owe += o; });
+  return {owed:round2(owed), owe:round2(owe)};
+}
+
 /* ---- loans ---- */
 function repsOf(l){ return l && Array.isArray(l.repayments) ? l.repayments : []; }   // tolerate junk in imported data
 function loanDir(l){ return l && l.direction==='borrowed' ? 'borrowed' : 'lent'; }
@@ -1309,8 +1381,8 @@ function planCardHTML(ym){
   const dim = daysInMonthYM(ym), elapsed = Number(todayISO().slice(8,10));
   const line = (label, val, sign)=>`<div class="two-col-item"><span>${label}</span><b class="${sign==='+'?'pos':''}">${sign}${fmtMoney(Math.abs(val))}</b></div>`;
   const rows = [
-    line('Tuition fees received','' + p.fees,'+'),
-    line('Outside income', p.outside,'+'),
+    `<div class="two-col-item"><span>Tuition received <button class="btn sm ghost" data-strip="tuition" data-ym="${ym}" style="margin-left:6px;">Details</button></span><b class="pos">+${fmtMoney(p.fees)}</b></div>`,
+    `<div class="two-col-item"><span>Outside income <button class="btn sm ghost" data-strip="outside" data-ym="${ym}" style="margin-left:6px;">Details</button></span><b class="pos">+${fmtMoney(p.outside)}</b></div>`,
     `<div class="two-col-item"><span>Carried over from last month <button class="btn sm ghost" id="mCarryBtn" style="margin-left:6px;">Edit</button></span><b class="${p.carry>0?'pos':''}">${p.carry>0?'+':''}${fmtMoney(p.carry)}</b></div>`,
     p.borrowedIn>0 ? line('Borrowed this month', p.borrowedIn,'+') : '',
     p.repaidToMe>0 ? line('Repayments you received', p.repaidToMe,'+') : '',
@@ -1334,10 +1406,10 @@ function planCardHTML(ym){
     ${rows}
     <div class="stat ${p.canSpend>0?'hot':''}" style="margin-top:12px;">
       <div class="num" style="${p.canSpend<0?'color:var(--err);':''}">${fmtSigned(p.canSpend)}</div>
-      <div class="lbl">${p.canSpend<0?'You are short before spending anything':'You can spend this month'}</div>
+      <div class="lbl">${p.canSpend<0?'You are short before spending anything':'Spendable this month'}</div>
     </div>
-    <div class="two-col-item" style="margin-top:8px;"><span>Spent so far</span><b>${fmtMoney(p.spent)}</b></div>
-    <div class="two-col-item"><span>${p.left<0?'Over by':'Left to spend'}</span><b style="color:${p.left<0?'var(--err)':'var(--ok)'};">${fmtMoney(Math.abs(p.left))}</b></div>
+    <div class="two-col-item" style="margin-top:8px;"><span>Spent</span><b>${fmtMoney(p.spent)}</b></div>
+    <div class="two-col-item"><span>${p.left<0?'Overspent by':'Remaining'}</span><b style="color:${p.left<0?'var(--err)':'var(--ok)'};">${fmtMoney(Math.abs(p.left))}</b></div>
     ${pace}
     ${p.owedToMe>0 ? `<div class="plan-hint">Not counted: ${fmtMoney(p.owedToMe)} owed to you, due by this month. Counting it before it arrives is how people overspend.</div>` : ''}
     ${totalOwe>0 ? `<div class="plan-hint">You owe ${fmtMoney(totalOwe)} in total (all due dates).</div>` : ''}
@@ -1365,12 +1437,63 @@ function openCarryModal(ym){
   }});
 }
 
+/* ---------- always-visible summary strip ---------- */
+function moneyStripHTML(){
+  const cur = todayISO().slice(0,7), p = moneyPlan(cur), t = loanTotals();
+  const neg = p.left<0;
+  const cell = (key,val,label)=>`<button type="button" class="strip-cell" data-strip="${key}"><b>${val}</b><span>${label}</span></button>`;
+  return `<div class="card money-strip">
+    <div class="strip-head">This month — ${monthLabel(cur)}</div>
+    <button type="button" class="strip-main ${neg?'neg':''}" data-strip="plan"><div class="strip-big">${fmtMoney(Math.abs(p.left))}</div><div class="strip-lbl">${neg?'Overspent by':'Remaining to spend'}</div></button>
+    <div class="strip-row">${cell('plan',fmtSigned(p.canSpend),'Spendable')}${cell('plan',fmtMoney(p.spent),'Spent')}</div>
+    <div class="strip-row ${p.carry>0?'three':''}">${cell('tuition',fmtMoney(p.fees),'Tuition received')}${cell('outside',fmtMoney(p.outside),'Outside income')}${p.carry>0?cell('carry',fmtMoney(p.carry),'Carried over'):''}</div>
+    <div class="strip-row three">${cell('savings',fmtMoney(savingsTotal()),'Savings')}${cell('owed',fmtMoney(t.owed),'Owed to you')}${cell('owe',fmtMoney(t.owe),'You owe')}</div>
+  </div>`;
+}
+function stripAction(key, ym){
+  const cur = todayISO().slice(0,7), m = ym || cur;
+  if(key==='tuition') return openTuitionBreakdown(m);
+  if(key==='outside') return openOutsideBreakdown(m);
+  if(key==='carry') return openCarryModal(m);
+  moneyTab = key==='plan' ? 'month' : key==='savings' ? 'savings' : 'dhar';
+  if(key==='plan') moneyMonth = null;
+  render();
+  window.scrollTo(0,0);
+}
+function openTuitionBreakdown(ym){
+  const list = feePaymentsIn(ym).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  const total = round2(list.reduce((a,p)=>a+p.amount,0));
+  openModal(`
+    ${modalHead('Tuition received — '+monthLabel(ym))}
+    <div class="page-sub" style="margin-bottom:10px;">Counted by the day each payment was recorded, not the month the fee is for. ${fmtMoney(total)} from ${list.length} payment${list.length===1?'':'s'}.</div>
+    ${list.length===0 ? `<div class="empty">No fee payments recorded in ${monthLabel(ym)} yet.</div>` :
+      `<div class="list">${list.map(p=>{ const st = studentById(p.studentId); return `<div class="item">
+        <div class="body"><div class="title">${escapeHTML(st?st.name:'(removed student)')}</div>
+          <div class="meta">fee for ${monthLabel(p.feeMonth)} · ${p.guessed?'no payment date recorded — counted in '+monthLabel(ym):shortDate(p.date)}</div></div>
+        <div style="font-weight:700;white-space:nowrap;">${fmtMoney(p.amount)}</div></div>`; }).join('')}</div>`}
+  `, {});
+}
+function openOutsideBreakdown(ym){
+  const list = incomesFor(ym).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  const total = round2(list.reduce((a,i)=>a+(Number(i.amount)||0),0));
+  openModal(`
+    ${modalHead('Outside income — '+monthLabel(ym))}
+    <div class="page-sub" style="margin-bottom:10px;">${fmtMoney(total)} from ${list.length} entr${list.length===1?'y':'ies'}. Tuition fees are separate — see Tuition received.</div>
+    ${list.length===0 ? `<div class="empty">No outside income recorded in ${monthLabel(ym)}.</div><button class="btn primary block" id="oAdd">Add income</button>` :
+      `<div class="list">${list.map(i=>incomeItemHTML(i,true)).join('')}</div>`}
+  `, {onMount: root=>{
+    root.querySelectorAll('[data-inc-edit]').forEach(n=>n.addEventListener('click',()=>{ closeModal(); openIncomeEdit(n.dataset.incEdit); }));
+    const add = root.querySelector('#oAdd');
+    if(add) add.addEventListener('click',()=>{ closeModal(); moneyTab='log'; moneyMode='income'; render(); window.scrollTo(0,0); });
+  }});
+}
+
 /* ---------- page shell ---------- */
 function renderMoney(){
   const tabs = [['log','Log'],['month','Month'],['dhar','Dhar'],['savings','Savings'],['calc','Calc']];
   const body = moneyTab==='month' ? moneyMonthHTML() : moneyTab==='dhar' ? moneyDharHTML() :
                moneyTab==='savings' ? moneySavingsHTML() : moneyTab==='calc' ? moneyCalcHTML() : moneyLogHTML();
-  return `<div class="tabs">${tabs.map(t=>`<button class="tab ${moneyTab===t[0]?'active':''}" data-money-tab="${t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
+  return `${moneyStripHTML()}<div class="tabs">${tabs.map(t=>`<button class="tab ${moneyTab===t[0]?'active':''}" data-money-tab="${t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
 }
 
 /* ---------- Log tab (expense / income) ---------- */
@@ -1820,6 +1943,7 @@ function openPotHistory(potId){
 /* ---------- binding ---------- */
 function bindMoney(){
   const view = document.getElementById('view');
+  view.querySelectorAll('[data-strip]').forEach(b=>b.addEventListener('click',()=>stripAction(b.dataset.strip, b.dataset.ym)));
   view.querySelectorAll('[data-money-tab]').forEach(b=>b.addEventListener('click',()=>{ moneyTab=b.dataset.moneyTab; render(); }));
   view.querySelectorAll('[data-exp-edit]').forEach(n=>n.addEventListener('click',()=>openExpenseEdit(n.dataset.expEdit)));
   view.querySelectorAll('[data-inc-edit]').forEach(n=>n.addEventListener('click',()=>openIncomeEdit(n.dataset.incEdit)));
@@ -3727,8 +3851,7 @@ function bindStudentDetail(id){
     const student = studentById(sid);
     let f = DB.fees.find(x=>x.studentId===sid && x.month===month);
     if(!f){ f={id:uid('fee'),studentId:sid,month,monthlyFee:student.monthlyFee,paid:0,paymentDate:null,method:'Cash',notes:''}; DB.fees.push(f); }
-    f.paid = (f.monthlyFee!=null) ? f.monthlyFee : student.monthlyFee; // respects a prorated override for this month
-    f.paymentDate = todayISO();
+    setFeePaid(f, (f.monthlyFee!=null) ? f.monthlyFee : student.monthlyFee, todayISO()); // respects a prorated override for this month
     saveDB(); render(); toast('Marked as fully paid');
   }));
   const rp = view.querySelector('[data-record-payment]'); if(rp) rp.addEventListener('click',()=>openPaymentForm(id));
@@ -4794,8 +4917,7 @@ function openPaymentForm(studentId){
       if(!f){ f={id:uid('fee'), studentId, month, monthlyFee:s.monthlyFee, paid:0, paymentDate:null, method:'Cash', notes:''}; DB.fees.push(f); }
       // Adds to any existing amount for that month, so partial installments (or an
       // advance on top of an already-paid month) accumulate rather than overwrite.
-      f.paid = Number(f.paid||0) + amount;
-      f.paymentDate = root.querySelector('#p_date').value || todayISO();
+      addFeePayment(f, amount, root.querySelector('#p_date').value || todayISO());
       f.method = root.querySelector('#p_method').value;
       const note = root.querySelector('#p_notes').value.trim();
       if(note) f.notes = f.notes ? f.notes+' · '+note : note;
@@ -4833,8 +4955,7 @@ function openFeeEditForm(studentId, month){
       const expectedVal = Number(root.querySelector('#fe_expected').value)||0;
       if(!f){ f={id:uid('fee'), studentId, month, monthlyFee:expectedVal, paid:0, paymentDate:null, method:'Cash', notes:''}; DB.fees.push(f); }
       f.monthlyFee = expectedVal; // per-month override — doesn't touch s.monthlyFee or any other month
-      f.paid = amount; // overwrite, unlike Record Payment which adds
-      f.paymentDate = root.querySelector('#fe_date').value || null;
+      setFeePaid(f, amount, root.querySelector('#fe_date').value || null); // overwrite, unlike Record Payment which adds
       f.method = root.querySelector('#fe_method').value;
       f.notes = root.querySelector('#fe_notes').value.trim();
       saveDB(); closeModal(); render(); toast('Corrected');

@@ -367,7 +367,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-07.1';
+const APP_BUILD = '2026-10-08.1-sync';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -471,6 +471,286 @@ function defaultScheduleBlocks(){
   ];
 }
 
+/* =========================================================================
+   LIVE SYNC (phone <-> PC) via the same Apps Script Web App.
+   - 3-way merge per record (base = last synced state, local, remote), so a stale
+     device can never silently overwrite another device's work.
+   - Edit-vs-delete: the edit always wins (data is never dropped by a merge).
+   - Same-record edits on both devices: newer edit wins, loser saved to conflict log.
+   - A copy of local data is saved before every merge that changes it (tp_sync_pre_v1).
+   - Nothing is applied while a modal/form is open; it waits.
+   ========================================================================= */
+const SYNC_STATE_KEY='tp_sync_state_v1', SYNC_PRE_KEY='tp_sync_pre_v1', SYNC_CONFLICT_KEY='tp_sync_conflicts_v1', SYNC_INIT_KEY='tp_sync_init_v1', SYNC_DEV_KEY='tp_sync_dev_v1';
+const SYNC_COLLS=['students','classRecords','homework','attendance','exams','batchExams','fees','tasks','expenses','incomes','loans','savingPots','savingTx','notes','syllabus','studyPlan','offDays','sessionLogs','schedule','subjects'];
+const SYNC_NATURAL={attendance:1,fees:1,offDays:1,sessionLogs:1}; // same logical record can be created on two devices with different ids
+const SYNC_LOCAL_SETTINGS=['sheetsWebAppUrl','sheetsAutoBackup','lastSheetsBackupAt','lastManualBackupAt','backupPin','theme','onboarded','syncOn','syncToken'];
+const SyncUI={state:'idle',msg:''};
+let syncBusy=false, syncAgain=false, syncTimer=null, syncRetryTimer=null;
+
+function syncStable(v){
+  if(v===null||typeof v!=='object') return JSON.stringify(v)||'null';
+  if(Array.isArray(v)) return '['+v.map(syncStable).join(',')+']';
+  return '{'+Object.keys(v).filter(k=>k!=='_u'&&k!=='_h'&&v[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+syncStable(v[k])).join(',')+'}';
+}
+function syncHash(c,it){
+  let src=it;
+  if(c && SYNC_NATURAL[c] && it && typeof it==='object'){ src=Object.assign({},it); delete src.id; }
+  const s=syncStable(src); let h1=0xdeadbeef,h2=0x41c6ce57;
+  for(let i=0;i<s.length;i++){ const ch=s.charCodeAt(i); h1=Math.imul(h1^ch,2654435761); h2=Math.imul(h2^ch,1597334677); }
+  h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);
+  h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);
+  return (h2>>>0).toString(36)+(h1>>>0).toString(36)+s.length.toString(36);
+}
+function syncKey(c,it){
+  if(it===null||typeof it!=='object') return 's:'+String(it);
+  switch(c){
+    case 'attendance': return 'a|'+it.studentId+'|'+it.date;
+    case 'fees': return 'f|'+it.studentId+'|'+it.month;
+    case 'offDays': return 'o|'+it.date+'|'+(it.scope||'all')+'|'+(it.targetId||'');
+    case 'sessionLogs': return 'l|'+it.date+'|'+(it.studentId||'')+'|'+(it.title||'')+'|'+(it.scheduledStart||'');
+  }
+  return it.id!==undefined ? 'i|'+it.id : 'h|'+syncHash(c,it);
+}
+// Stamp every record with _h (content hash) and _u (time of last real change). Records that
+// existed before sync was introduced get _u=0 so they never "win" a conflict just by being stamped.
+function syncStamp(){
+  if(DEMO_MODE) return;
+  let first=false; try{ first=!localStorage.getItem(SYNC_INIT_KEY); }catch(e){}
+  const now=Date.now();
+  SYNC_COLLS.forEach(c=>{
+    const a=DB[c]; if(!Array.isArray(a)) return;
+    a.forEach(it=>{
+      if(!it||typeof it!=='object') return;
+      const h=syncHash(c,it);
+      if(it._h!==h){ it._u=(it._h===undefined && first)?0:now; it._h=h; }
+    });
+  });
+  if(first){ try{ localStorage.setItem(SYNC_INIT_KEY,'1'); }catch(e){} }
+}
+function syncPayload(){
+  const o={};
+  Object.keys(DB).forEach(k=>{ if(k!=='prayerTimes') o[k]=DB[k]; });
+  o.settings={};
+  Object.keys(DB.settings||{}).forEach(k=>{ if(SYNC_LOCAL_SETTINGS.indexOf(k)<0) o.settings[k]=DB.settings[k]; });
+  return o;
+}
+function syncMap(p){
+  const m={c:{},s:{}};
+  SYNC_COLLS.forEach(c=>{ const mm=m.c[c]={}; (Array.isArray(p[c])?p[c]:[]).forEach(it=>{ mm[syncKey(c,it)]=syncHash(c,it); }); });
+  Object.keys(p.settings||{}).forEach(k=>{ if(SYNC_LOCAL_SETTINGS.indexOf(k)<0) m.s[k]=syncHash(null,p.settings[k]); });
+  return m;
+}
+function syncSameMap(a,b){ return syncStable(a||{})===syncStable(b||{}); }
+function syncCount(p){ let n=0; SYNC_COLLS.forEach(c=>{ if(c!=='schedule'&&c!=='subjects'&&Array.isArray(p[c])) n+=p[c].length; }); return n; }
+
+// Pure 3-way merge. L = local payload, R = remote payload, base = {c:{coll:{key:hash}},s:{key:hash}} or null.
+function syncMerge(L,R,base){
+  base=base||{c:{},s:{}};
+  let dflt=null; try{ dflt=defaultDB().settings; }catch(e){}
+  const out=Object.assign({},L), stats={added:0,removed:0,updated:0,keptEdit:0,conflicts:0}, conflicts=[];
+  SYNC_COLLS.forEach(c=>{
+    const la=Array.isArray(L[c])?L[c]:[], ra=Array.isArray(R[c])?R[c]:[], bm=(base.c&&base.c[c])||{};
+    const rm=new Map(), lm=new Map();
+    ra.forEach(it=>rm.set(syncKey(c,it),it)); la.forEach(it=>lm.set(syncKey(c,it),it));
+    const res=[];
+    la.forEach(it=>{
+      const k=syncKey(c,it), hl=syncHash(c,it), hb=bm[k], r=rm.get(k);
+      if(r===undefined){
+        if(hb===undefined) res.push(it);                         // new on this device
+        else if(hl===hb) stats.removed++;                        // deleted on the other device, untouched here
+        else { res.push(it); stats.keptEdit++; }                 // edited here, deleted there -> keep the edit
+      } else {
+        const hr=syncHash(c,r);
+        if(hl===hr) res.push(it);
+        else if(hb!==undefined && hl===hb){ res.push(r); stats.updated++; }   // only the other device changed it
+        else if(hb!==undefined && hr===hb) res.push(it);                       // only this device changed it
+        else {                                                                  // both changed (or no common base)
+          const lu=Number(it&&it._u)||0, ru=Number(r&&r._u)||0;
+          if(ru>lu){ res.push(r); stats.updated++; conflicts.push({coll:c,key:k,kept:'remote',lost:it}); }
+          else { res.push(it); conflicts.push({coll:c,key:k,kept:'local',lost:r}); }
+          stats.conflicts++;
+        }
+      }
+    });
+    ra.forEach(r=>{
+      const k=syncKey(c,r); if(lm.has(k)) return;
+      const hb=bm[k], hr=syncHash(c,r);
+      if(hb===undefined){ res.push(r); stats.added++; }                          // new on the other device
+      else if(hr===hb){ /* deleted here, untouched there -> stays deleted */ }
+      else { res.push(r); stats.keptEdit++; }                                    // deleted here, edited there -> keep the edit
+    });
+    out[c]=res;
+  });
+  // settings: per key; device-local keys are never touched
+  const ls=(L.settings||{}), rs=(R.settings||{}), bs=base.s||{}, ms=Object.assign({},ls);
+  Object.keys(rs).forEach(k=>{
+    if(SYNC_LOCAL_SETTINGS.indexOf(k)>=0) return;
+    if(!(k in ls)){ ms[k]=rs[k]; return; }
+    const hl=syncHash(null,ls[k]), hr=syncHash(null,rs[k]), hb=bs[k];
+    if(hl===hr) return;
+    if(hb!==undefined && hl===hb) ms[k]=rs[k];                                   // only the other device changed it
+    else if(hb===undefined && dflt && (k in dflt) && hl===syncHash(null,dflt[k])) ms[k]=rs[k];   // no history yet and this device still has the factory default -> take the cloud value
+    else if(hb===undefined || hr!==hb) conflicts.push({coll:'settings',key:k,kept:'local',lost:rs[k]});
+  });
+  out.settings=ms;
+  return {out,stats,conflicts};
+}
+
+/* ---- state, UI, helpers ---- */
+function syncLoadState(){ try{ return JSON.parse(localStorage.getItem(SYNC_STATE_KEY))||{}; }catch(e){ return {}; } }
+function syncSaveState(s){ try{ localStorage.setItem(SYNC_STATE_KEY,JSON.stringify(s)); }catch(e){ console.warn('sync state save failed',e); } }
+function syncResetBase(){ const S=syncLoadState(); delete S.base; delete S.rev; syncSaveState(S); } // next sync = pull + union-merge, never deletes anything
+function syncDeviceId(){ try{ let d=localStorage.getItem(SYNC_DEV_KEY); if(!d){ d=uid('dev'); localStorage.setItem(SYNC_DEV_KEY,d); } return d; }catch(e){ return 'dev_unknown'; } }
+function syncEnabled(){
+  if(DEMO_MODE) return false;
+  const st=DB.settings||{};
+  if(!st.sheetsWebAppUrl) return false;
+  return st.syncOn===undefined ? !!st.sheetsAutoBackup : !!st.syncOn;
+}
+function syncPersistLocal(){ try{ localStorage.setItem(DB_KEY,JSON.stringify(DB)); return true; }catch(e){ return false; } }
+function syncUserBusy(){
+  try{
+    const mr=document.getElementById('modalRoot'); if(mr && mr.innerHTML.trim()) return true;
+    if(ROUTE.page==='today' && todayEditMode) return true;
+    if(moneyIsEditing()) return true;
+    const a=document.activeElement;
+    if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.closest && a.closest('#view') && ROUTE.page!=='settings') return true;
+  }catch(e){}
+  return false;
+}
+function syncStatusLine(){
+  if(!syncEnabled()) return 'Live sync is off.';
+  const S=syncLoadState();
+  const nConf=(function(){ try{ return JSON.parse(localStorage.getItem(SYNC_CONFLICT_KEY)||'[]').length; }catch(e){ return 0; } })();
+  let t;
+  if(SyncUI.state==='syncing') t='Syncing…';
+  else if(SyncUI.state==='offline') t='Offline — changes are safe on this device and will sync when you are back online.';
+  else if(SyncUI.state==='waiting') t='Waiting until you finish editing…';
+  else if(SyncUI.state==='error') t='⚠ '+SyncUI.msg;
+  else t=S.lastOk ? 'Synced ✓ '+new Date(S.lastOk).toLocaleString() : 'Not synced yet.';
+  return t+(nConf?` · ${nConf} conflict(s) logged`:'');
+}
+function syncSet(state,msg){
+  SyncUI.state=state; SyncUI.msg=msg||'';
+  try{ const el=document.getElementById('syncStatusText'); if(el) el.textContent=syncStatusLine(); }catch(e){}
+}
+function syncSchedule(delay){ clearTimeout(syncTimer); syncTimer=setTimeout(()=>syncNow('edit'),delay||3000); }
+function syncRetryLater(){ SyncUI.state='waiting'; syncSet('waiting'); clearTimeout(syncRetryTimer); syncRetryTimer=setTimeout(()=>syncNow('retry'),6000); }
+function syncURL(act){
+  const st=DB.settings, u=st.sheetsWebAppUrl;
+  return u+(u.indexOf('?')<0?'?':'&')+'action='+act+(st.syncToken?'&token='+encodeURIComponent(st.syncToken):'')+'&_='+Date.now();
+}
+async function syncReq(url,opts){
+  const ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+  const t=setTimeout(()=>{ if(ctl) ctl.abort(); },25000);
+  try{
+    const res=await fetch(url,Object.assign(ctl?{signal:ctl.signal}:{},opts||{}));
+    return await res.json();
+  } finally { clearTimeout(t); }
+}
+function syncLogConflicts(list){
+  if(!list.length) return;
+  try{
+    const old=JSON.parse(localStorage.getItem(SYNC_CONFLICT_KEY)||'[]');
+    const add=list.map(c=>({at:new Date().toISOString(),coll:c.coll,key:c.key,keptFrom:c.kept,lostVersion:c.lost}));
+    localStorage.setItem(SYNC_CONFLICT_KEY,JSON.stringify(old.concat(add).slice(-100)));
+  }catch(e){}
+}
+
+/* ---- the engine ---- */
+async function syncNow(reason){
+  if(!syncEnabled()) return;
+  if(syncBusy){ syncAgain=true; return; }
+  if(typeof navigator!=='undefined' && navigator.onLine===false){ syncSet('offline'); return; }
+  if(reason!=='manual' && syncUserBusy()){ syncRetryLater(); return; }
+  syncBusy=true; syncAgain=false; syncSet('syncing');
+  try{
+    syncStamp();
+    const S=syncLoadState();
+    let done=false;
+    for(let attempt=0; attempt<3 && !done; attempt++){
+      const meta=await syncReq(syncURL('meta'));
+      if(!meta || !meta.ok) throw new Error((meta&&meta.error)||'Could not reach the sync endpoint');
+      const dirty=!syncSameMap(syncMap(syncPayload()),S.base);
+      if(S.base && meta.rev===S.rev && !dirty){ done=true; break; }
+      let remote=null, remoteRev=meta.rev;
+      if(meta.rev>0 && (meta.rev!==S.rev || !S.base)){
+        const r=await syncReq(syncURL('restore'));
+        if(!r || !r.ok) throw new Error((r&&r.error)||'Could not download the backup');
+        if(!r.data || !Array.isArray(r.data.students)) throw new Error('Cloud copy looks corrupted — sync stopped, nothing changed');
+        remote=r.data; remoteRev=(r.rev!==undefined?r.rev:meta.rev);
+      }
+      if(reason!=='manual' && syncUserBusy()){ syncRetryLater(); return; }  // user started typing while we were fetching: apply later
+      if(remote){
+        const res=syncMerge(syncPayload(),remote,S.base);
+        const rc=syncCount(remote);
+        if(rc>=10 && syncCount(res.out)<rc*0.5) throw new Error('Sync stopped: this would delete more than half of your records. Nothing was changed. Use Import/Restore if this is really intended.');
+        const changed=!syncSameMap(syncMap(syncPayload()),syncMap(res.out));
+        if(changed){
+          try{ localStorage.setItem(SYNC_PRE_KEY,JSON.stringify({at:new Date().toISOString(),db:DB})); }
+          catch(e){ throw new Error('Not enough storage to safely merge — sync stopped, nothing changed'); }
+          Object.keys(res.out).forEach(k=>{ if(k==='settings') Object.assign(DB.settings,res.out.settings); else DB[k]=res.out[k]; }); // settings: only shared keys are overwritten, this device's own URL/token/theme stay
+          if((DB.students||[]).length) DB.settings.onboarded=true;
+          if(!syncPersistLocal()) throw new Error('Could not save merged data on this device');
+          syncLogConflicts(res.conflicts);
+          if(!(ROUTE.page==='today' && todayEditMode)) { try{ render(); }catch(e){ console.warn(e); } }
+        } else syncLogConflicts(res.conflicts);
+      }
+      const payload=syncPayload(), pushedMap=syncMap(payload);
+      if(remote && syncSameMap(pushedMap,syncMap(remote))){        // already identical to the cloud
+        S.base=pushedMap; S.rev=remoteRev; done=true; break;
+      }
+      if(!remote && isDbEmpty()){ done=true; break; }                // nothing worth pushing
+      const resp=await syncReq(syncURL('x').replace(/action=x/,'action=sync'),{
+        method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({action:'sync',baseRev:remoteRev,deviceId:syncDeviceId(),token:DB.settings.syncToken||'',data:payload})
+      });
+      if(resp && resp.ok){ S.base=pushedMap; S.rev=resp.rev; done=true; break; }
+      if(resp && resp.conflict){ continue; }                        // someone pushed in between: pull + merge again
+      throw new Error((resp&&resp.error)||'Push failed');
+    }
+    if(!done) throw new Error('Cloud kept changing while syncing — will retry');
+    S.lastOk=new Date().toISOString(); syncSaveState(S);
+    DB.settings.lastSheetsBackupAt=S.lastOk; syncPersistLocal();
+    syncSet('idle');
+    if(ROUTE.page==='settings'){ const el=document.getElementById('syncStatusText'); if(el) el.textContent=syncStatusLine(); }
+    if(!syncSameMap(syncMap(syncPayload()),S.base)) syncAgain=true;  // edits made while we were syncing
+  }catch(err){
+    console.warn('Sync failed:',err);
+    const offline=(typeof navigator!=='undefined' && navigator.onLine===false) || (err && (err.name==='TypeError' || err.name==='AbortError'));
+    if(offline) syncSet('offline'); else syncSet('error',String(err&&err.message||err));
+  }finally{
+    syncBusy=false;
+    if(syncAgain){ syncAgain=false; syncSchedule(2000); }
+  }
+}
+function syncUndoLast(){
+  let raw=null; try{ raw=localStorage.getItem(SYNC_PRE_KEY); }catch(e){}
+  if(!raw){ toast('No pre-sync copy found'); return; }
+  let snap; try{ snap=JSON.parse(raw); }catch(e){ toast('Pre-sync copy is unreadable'); return; }
+  if(!snap||!snap.db||!Array.isArray(snap.db.students)){ toast('Pre-sync copy is unreadable'); return; }
+  if(!confirm('Go back to this device\'s data as it was just before the last sync merge ('+new Date(snap.at).toLocaleString()+')?\n\nLive sync will be switched OFF so it does not merge the newer cloud data straight back in. You can turn it on again later.')) return;
+  DB=mergeIntoDefaults(snap.db); DB.settings.syncOn=false; DB_KEY=REAL_DB_KEY; DEMO_MODE=false;
+  syncResetBase(); syncPersistLocal(); navigate('settings'); toast('Went back to the pre-sync copy; live sync is off');
+}
+function syncDownloadConflicts(){
+  let raw='[]'; try{ raw=localStorage.getItem(SYNC_CONFLICT_KEY)||'[]'; }catch(e){}
+  const blob=new Blob([raw],{type:'application/json'}), a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='teacher-planner-sync-conflicts-'+todayISO()+'.json';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function syncInit(){
+  try{
+    let first=false; try{ first=!localStorage.getItem(SYNC_INIT_KEY); }catch(e){}
+    if(first && !DEMO_MODE){ syncStamp(); syncPersistLocal(); }
+  }catch(e){ console.warn('sync init',e); }
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') syncNow('focus'); });
+  window.addEventListener('online',()=>syncNow('online'));
+  window.addEventListener('offline',()=>syncSet('offline'));
+  setInterval(()=>{ if(document.visibilityState==='visible') syncNow('poll'); },30000);
+  setTimeout(()=>syncNow('start'),1500);
+}
+
 let DB = loadDB();
 
 // Shared merge so a fresh load AND a manual "Import Backup" both survive schema
@@ -531,6 +811,7 @@ function loadDB(){
   }
 }
 function saveDB(){
+  try{ syncStamp(); }catch(e){ /* sync bookkeeping must never block a save */ }
   try{
     localStorage.setItem(DB_KEY, JSON.stringify(DB));
   }catch(e){
@@ -822,6 +1103,7 @@ function daysSinceLastSheetsBackup(){
 let sheetsBackupTimer = null;
 function scheduleSheetsBackup(){
   if(DEMO_MODE) return; // demo never talks to Sheets, no matter what — hard block, not just "no URL configured"
+  if(syncEnabled()){ syncSchedule(); return; } // live sync replaces the old blind overwrite push
   if(!DB.settings.sheetsAutoBackup || !DB.settings.sheetsWebAppUrl) return;
   clearTimeout(sheetsBackupTimer);
   sheetsBackupTimer = setTimeout(pushToSheets, 5000);
@@ -844,7 +1126,7 @@ async function pushToSheets(silent){
     const res = await fetch(url, {
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({ data: DB })
+      body: JSON.stringify({ token: DB.settings.syncToken||'', data: DB })
     });
     const json = await res.json().catch(()=>({ok:false,error:'Bad response'}));
     if(!json.ok){ const er = new Error(json.error||'Unknown error'); er.refused = !!json.refused; throw er; }
@@ -867,15 +1149,18 @@ async function restoreFromSheets(skipConfirm){
   if(!url){ alert('Add your Apps Script Web App URL in Settings first.'); return; }
   try{
     toast('Fetching backup…');
-    const res = await fetch(`${url}?action=restore`);
+    const res = await fetch(`${url}?action=restore${DB.settings.syncToken?'&token='+encodeURIComponent(DB.settings.syncToken):''}`);
     const json = await res.json();
     if(!json.ok) throw new Error(json.error||'Restore failed');
     const parsed = json.data;
     if(!parsed || !Array.isArray(parsed.students)) throw new Error('Backup on the sheet looks corrupted or empty');
     if(!skipConfirm && !confirm('Replace ALL current data with the Google Sheet backup? This cannot be undone.')) return;
+    const keepLocal = {}; SYNC_LOCAL_SETTINGS.forEach(k=>{ if(DB.settings && DB.settings[k]!==undefined) keepLocal[k]=DB.settings[k]; }); // this device's own URL/token/theme must survive a restore
     DB = mergeIntoDefaults(parsed);
+    Object.assign(DB.settings, keepLocal);
     DB.settings.onboarded = true;
     DB_KEY = REAL_DB_KEY; DEMO_MODE = false; // restoring is always a real-account action
+    syncResetBase();
     saveDB();
     navigate('dashboard');
     toast('Restored from Google Sheet');
@@ -4276,10 +4561,17 @@ function renderSettings(){
     </div>
     <div class="field"><label>Apps Script Web App URL</label><input id="setSheetsUrl" value="${escapeHTML(st.sheetsWebAppUrl||'')}" placeholder="https://script.google.com/macros/s/…/exec"></div>
     <div class="field"><label><input type="checkbox" id="setSheetsAuto" ${st.sheetsAutoBackup?'checked':''} style="width:auto;margin-right:6px;">Auto-backup after every change</label></div>
+    <div class="field"><label><input type="checkbox" id="setSyncOn" ${syncEnabled()?'checked':''} style="width:auto;margin-right:6px;">Live sync between devices (phone ⇄ PC) — merges, never overwrites</label></div>
+    <div class="field"><label>Sync token (optional — only if you set one in Code.gs)</label><input id="setSyncToken" value="${escapeHTML(st.syncToken||'')}" placeholder="leave empty if not used"></div>
+    <div class="page-sub" id="syncStatusText" style="margin-bottom:10px;">${escapeHTML(syncStatusLine())}</div>
     <button class="btn primary block" id="saveSheetsSettingsBtn" style="margin-bottom:10px;">Save</button>
     <div class="grid2">
-      <button class="btn block" id="sheetsBackupNowBtn">Backup Now</button>
+      <button class="btn block" id="sheetsBackupNowBtn">${syncEnabled()?'Sync Now':'Backup Now'}</button>
       <button class="btn block" id="sheetsRestoreBtn">Restore From Sheet</button>
+    </div>
+    <div class="grid2" style="margin-top:10px;">
+      <button class="btn block" id="syncUndoBtn">Undo last sync</button>
+      <button class="btn block" id="syncConflictsBtn">Conflict log</button>
     </div>
     <div class="hint" style="margin-top:10px;">One-time setup: create a Google Sheet, Extensions → Apps Script, paste the provided Code.gs, Deploy → Web App → Anyone with the link → copy the URL here. Only pushes automatically — restoring back always needs an explicit tap on "Restore From Sheet" plus a confirm, so nothing overwrites your data by accident.</div>
   </div>
@@ -4332,7 +4624,7 @@ function bindSettings(){
   document.getElementById('resetBtn').addEventListener('click',()=>{
     if(confirm('This will permanently delete ALL data on this device. Continue?')){
       if(confirm('Are you absolutely sure? This cannot be undone.')){
-        localStorage.removeItem(DB_KEY); DB = defaultDB(); saveDB(); navigate('dashboard'); toast('All data reset');
+        localStorage.removeItem(DB_KEY); DB = defaultDB(); syncResetBase(); saveDB(); navigate('dashboard'); toast('All data reset');
       }
     }
   });
@@ -4340,10 +4632,16 @@ function bindSettings(){
   if(sheetsSaveBtn) sheetsSaveBtn.addEventListener('click', ()=>{
     DB.settings.sheetsWebAppUrl = view.querySelector('#setSheetsUrl').value.trim();
     DB.settings.sheetsAutoBackup = view.querySelector('#setSheetsAuto').checked;
-    saveDB(); render(); toast('Saved');
+    DB.settings.syncOn = view.querySelector('#setSyncOn').checked;
+    DB.settings.syncToken = view.querySelector('#setSyncToken').value.trim();
+    saveDB(); render(); toast('Saved'); if(syncEnabled()) syncNow('manual');
   });
   const sheetsBackupNowBtn = document.getElementById('sheetsBackupNowBtn');
-  if(sheetsBackupNowBtn) sheetsBackupNowBtn.addEventListener('click', ()=>pushToSheets(false));
+  if(sheetsBackupNowBtn) sheetsBackupNowBtn.addEventListener('click', ()=>{ if(syncEnabled()) syncNow('manual'); else pushToSheets(false); });
+  const syncUndoBtn = document.getElementById('syncUndoBtn');
+  if(syncUndoBtn) syncUndoBtn.addEventListener('click', syncUndoLast);
+  const syncConflictsBtn = document.getElementById('syncConflictsBtn');
+  if(syncConflictsBtn) syncConflictsBtn.addEventListener('click', syncDownloadConflicts);
   const sheetsRestoreBtn = document.getElementById('sheetsRestoreBtn');
   if(sheetsRestoreBtn) sheetsRestoreBtn.addEventListener('click', ()=>restoreFromSheets());
 }
@@ -4362,7 +4660,10 @@ function importBackup(e){
         throw new Error('Not a valid backup file');
       }
       if(!confirm('This will replace all current data with the backup. Continue?')) return;
+      const keepLocal = {}; SYNC_LOCAL_SETTINGS.forEach(k=>{ if(DB.settings && DB.settings[k]!==undefined) keepLocal[k]=DB.settings[k]; });
       DB = mergeIntoDefaults(parsed); // same merge path as normal load — new fields fall back to defaults, nothing dropped
+      Object.assign(DB.settings, keepLocal);
+      syncResetBase(); // after an import, the next sync merges with the cloud instead of deleting things there
       saveDB();
       navigate('dashboard');
       toast('Backup restored');
@@ -5433,6 +5734,7 @@ window.addEventListener('pageshow', (e)=>{
 
 autoFillMissedSessionLogs();
 render();
+syncInit();
 
 // Register service worker for offline app-shell caching (required for a proper
 // standalone/full-screen install on Android). Fails silently on file:// or if

@@ -367,7 +367,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-11.1-sync-payments';
+const APP_BUILD = '2026-10-11.2-money-cats';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -1270,14 +1270,60 @@ const PAGE_TITLES = {dashboard:'Dashboard', today:'Today', students:'Students', 
    Data: DB.expenses = [{id,date,amount,kind:'personal'|'business',category,note,createdAt}]
    Budgets: DB.settings.monthlyBudgetPersonal / monthlyBudgetBusiness (0 = none)
    ========================================================================= */
-const EXPENSE_KINDS = {personal:'Personal', business:'Teaching'};
+const EXPENSE_KINDS = {personal:'Personal', business:'Teaching', farm:'Farm'};
+// DEFAULT lists. The live lists are editable (Money → Manage categories) and stored in
+// DB.settings.expenseCats / incomeSources; until the first edit those settings are absent and these apply.
 const EXPENSE_CATEGORIES = {
-  personal:['Food','Transport','Household','Family','Health','Mobile & Internet','Other'],
-  business:['Books & Stationery','Printing','Internet & Data','Transport','Teaching Supplies','Other']
+  personal:['Food','Transport','Household','Family','Health','Mobile & Internet','Clothing','Education','Charity & Donation','Entertainment','Other'],
+  business:['Books & Stationery','Printing','Internet & Data','Transport','Teaching Supplies','Training & Courses','Other'],
+  farm:['Seeds','Fertilizer','Pesticide','Labour','Irrigation / Fuel','Equipment & Repair','Land Rent / Tax','Transport & Market','Other']
 };
+const DEFAULT_EMOJI = {'Food':'🍽️','Transport':'🚌','Household':'🏠','Family':'👪','Health':'💊','Mobile & Internet':'📶','Clothing':'👕','Education':'📚','Charity & Donation':'❤️','Entertainment':'🎬','Books & Stationery':'✏️','Printing':'🖨️','Internet & Data':'📶','Teaching Supplies':'🎒','Training & Courses':'🎓','Seeds':'🌱','Fertilizer':'🧪','Pesticide':'🧴','Labour':'👷','Irrigation / Fuel':'⛽','Equipment & Repair':'🔧','Land Rent / Tax':'📄','Transport & Market':'🚚','Freelance / Web':'💻','Salary':'💼','Farm / Agriculture':'🌾','Gift':'🎁','Other':'➕'};
+function kindOf(e){ return e && typeof e.kind==='string' && Object.prototype.hasOwnProperty.call(EXPENSE_KINDS,e.kind) ? e.kind : 'personal'; }
+function kindColor(k){ return k==='business' ? 'var(--teal)' : k==='farm' ? 'var(--ok)' : 'var(--amber)'; }
+function cleanCatList(l){
+  const seen = new Set(), out = [];
+  (Array.isArray(l)?l:[]).forEach(x=>{
+    if(!x || typeof x.n!=='string') return;
+    const n = x.n.trim().slice(0,30); if(!n || seen.has(n.toLowerCase())) return; seen.add(n.toLowerCase());
+    out.push({n, e:typeof x.e==='string'?x.e.slice(0,8):'', b:Number(x.b)>0?round2(Number(x.b)):0, h:!!x.h});
+  });
+  return out;
+}
+function catListAll(kind){            // full list, hidden ones included
+  const s = DB.settings.expenseCats;
+  if(s && typeof s==='object' && Array.isArray(s[kind])) return cleanCatList(s[kind]);
+  return (EXPENSE_CATEGORIES[kind]||[]).map(n=>({n, e:DEFAULT_EMOJI[n]||'', b:0, h:false}));
+}
+function expCats(kind){ return catListAll(kind).filter(x=>!x.h).map(x=>x.n); }
+function srcListAll(){
+  const s = DB.settings.incomeSources;
+  if(Array.isArray(s)) return cleanCatList(s).map(x=>({n:x.n, e:x.e, b:0, h:x.h}));
+  return INCOME_SOURCES.map(n=>({n, e:DEFAULT_EMOJI[n]||'', b:0, h:false}));
+}
+function incSources(){ return srcListAll().filter(x=>!x.h).map(x=>x.n); }
+function catEmoji(name, kind){
+  const lists = kind && kind!=='all' && kind!=='income' ? [catListAll(kind)] : Object.keys(EXPENSE_KINDS).map(catListAll);
+  for(const l of lists){ const f = l.find(x=>x.n===name); if(f) return f.e||''; }
+  return DEFAULT_EMOJI[name]||'';
+}
+function catBudgetFor(name, kind){      // monthly budget for a category name (summed over the kinds in scope)
+  const kinds = (kind && kind!=='all') ? [kind] : Object.keys(EXPENSE_KINDS);
+  return round2(kinds.reduce((a,k)=>{ const f = catListAll(k).find(x=>x.n===name); return a + (f ? f.b : 0); },0));
+}
+function catPersist(kind, list){
+  list = cleanCatList(list);
+  if(kind==='income'){ DB.settings.incomeSources = list.map(x=>({n:x.n,e:x.e,h:x.h})); }
+  else {
+    const s = Object.assign({}, DB.settings.expenseCats||{});
+    Object.keys(EXPENSE_KINDS).forEach(k=>{ if(!Array.isArray(s[k])) s[k] = catListAll(k); });   // freeze the other kinds' lists as they are now
+    s[kind] = list; DB.settings.expenseCats = s;
+  }
+  saveDB();
+}
 let moneyTab = 'log';                 // 'log' | 'month' | 'calc'
 let moneyKind = 'personal';           // type chosen in the quick-add form
-let moneyLastCat = {personal:null, business:null};
+let moneyLastCat = {personal:null, business:null, farm:null};
 let moneyMonth = null;                // Month tab override, 'YYYY-MM'
 let moneyFilter = 'all';              // Month tab: 'all' | 'personal' | 'business'
 // Typed-but-unsaved form text lives here, NOT only in the DOM, so any re-render
@@ -1354,7 +1400,6 @@ function safeCalc(src){
 /* ---------- small helpers ---------- */
 function round2(n){ return Math.round(n*100)/100; }
 function edate(e){ return (e && typeof e.date==='string') ? e.date : ''; }
-function kindOf(e){ return e && e.kind==='business' ? 'business' : 'personal'; }
 function expensesFor(ym, kind){
   return (DB.expenses||[]).filter(e=>edate(e).slice(0,7)===ym && (!kind || kind==='all' || kindOf(e)===kind));
 }
@@ -1372,12 +1417,12 @@ function expDayLabel(iso){
 }
 function fmtNum(n){ return Number(n).toLocaleString('en-IN',{maximumFractionDigits:6}); }
 function budgetFor(kind){
-  const v = Number(kind==='business' ? DB.settings.monthlyBudgetBusiness : DB.settings.monthlyBudgetPersonal);
+  const v = Number(kind==='business' ? DB.settings.monthlyBudgetBusiness : kind==='farm' ? DB.settings.monthlyBudgetFarm : DB.settings.monthlyBudgetPersonal);
   return isFinite(v) && v>0 ? v : 0;
 }
 function moneyCategoryFor(kind){
-  const cats = EXPENSE_CATEGORIES[kind];
-  return cats.indexOf(moneyLastCat[kind])>=0 ? moneyLastCat[kind] : cats[0];
+  const cats = expCats(kind);
+  return cats.indexOf(moneyLastCat[kind])>=0 ? moneyLastCat[kind] : (cats[0] || 'Other');
 }
 // True while the person is mid-typing on the Money page. The 60-second auto-refresh
 // (refreshTick) must not rebuild the page then, or it would wipe what they typed.
@@ -1392,7 +1437,7 @@ function expenseItemHTML(e, showDate){
   const note = (e.note||'').trim();
   const d = showDate && edate(e) ? new Date(edate(e)+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · ' : '';
   return `<div class="item" style="cursor:pointer;" data-exp-edit="${escapeHTML(e.id)}">
-    <div class="dot" style="background:${kindOf(e)==='business'?'var(--teal)':'var(--amber)'}"></div>
+    <div class="dot" style="background:${kindColor(kindOf(e))}"></div>
     <div class="body"><div class="title">${escapeHTML(e.category||'Other')}</div><div class="meta">${d}${EXPENSE_KINDS[kindOf(e)]}${note?' · '+escapeHTML(note):''}</div></div>
     <div style="font-weight:700;white-space:nowrap;">${fmtMoney(e.amount)}</div>
   </div>`;
@@ -1425,7 +1470,7 @@ function openExpenseEdit(id){
   `, {onMount: root=>{
     const sel = root.querySelector('#eCat');
     function fillCats(current){
-      const list = EXPENSE_CATEGORIES[kind].slice();
+      const list = expCats(kind);
       if(current && list.indexOf(current)<0) list.unshift(current);   // keep an unknown/old category selectable
       sel.innerHTML = list.map(c=>`<option value="${escapeHTML(c)}" ${c===current?'selected':''}>${escapeHTML(c)}</option>`).join('');
     }
@@ -1460,14 +1505,16 @@ function openBudgetModal(){
     ${modalHead('Monthly budget')}
     <div class="field"><label>Personal (৳, 0 = none)</label><input id="bPersonal" type="text" inputmode="decimal" value="${budgetFor('personal')||''}"></div>
     <div class="field"><label>Teaching (৳, 0 = none)</label><input id="bBusiness" type="text" inputmode="decimal" value="${budgetFor('business')||''}"></div>
+    <div class="field"><label>Farm (৳, 0 = none)</label><input id="bFarm" type="text" inputmode="decimal" value="${budgetFor('farm')||''}"></div>
     <div class="modal-actions"><button class="btn primary" id="bSave">Save</button></div>
   `, {center:true, onMount: root=>{
     root.querySelector('#bSave').addEventListener('click',()=>{
       const read = id => { const v = root.querySelector(id).value.trim(); if(!v) return 0; const r = safeCalc(v); return r.ok && r.value>0 ? round2(r.value) : NaN; };
-      const p = read('#bPersonal'), b = read('#bBusiness');
-      if(isNaN(p) || isNaN(b)){ toast('Enter a valid number, or leave blank'); return; }
+      const p = read('#bPersonal'), b = read('#bBusiness'), fm = read('#bFarm');
+      if(isNaN(p) || isNaN(b) || isNaN(fm)){ toast('Enter a valid number, or leave blank'); return; }
       DB.settings.monthlyBudgetPersonal = p;
       DB.settings.monthlyBudgetBusiness = b;
+      DB.settings.monthlyBudgetFarm = fm;
       saveDB(); closeModal(); toast('Budget saved'); render();
     });
   }});
@@ -1541,7 +1588,7 @@ function calcPress(k){
                     repayments:[{id,date,amount}],createdAt}]
    DB.settings.moneyCarry = {'YYYY-MM': amount}   (typed-in cash carried over; no running balance)
    ========================================================================= */
-const INCOME_SOURCES = ['Freelance / Web','Salary','Gift','Other'];
+const INCOME_SOURCES = ['Freelance / Web','Salary','Farm / Agriculture','Gift','Other'];   // defaults; editable in Manage categories
 let moneyMode = 'expense';            // Log tab: 'expense' | 'income'
 let moneyIncomeSrc = null;
 let loanShowSettled = false;
@@ -1552,7 +1599,7 @@ function okISO(d){ return /^\d{4}-\d{2}-\d{2}$/.test(String(d||'')); }
 function fmtSigned(v){ return v<0 ? '−'+fmtMoney(Math.abs(round2(v))) : fmtMoney(round2(v)); }
 function shortDate(iso){ return okISO(iso) ? new Date(iso+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''; }
 function incomesFor(ym){ return (DB.incomes||[]).filter(i=>monthOf(i.date)===ym); }
-function incomeSourceDefault(){ return INCOME_SOURCES.indexOf(moneyIncomeSrc)>=0 ? moneyIncomeSrc : INCOME_SOURCES[0]; }
+function incomeSourceDefault(){ const l = incSources(); return l.indexOf(moneyIncomeSrc)>=0 ? moneyIncomeSrc : (l[0] || 'Other'); }
 
 /* ---- tuition: payment history inside each fee record ----
    fee.payments = [{date,amount}] is ADDITIVE: fee.paid / fee.paymentDate stay exactly as before
@@ -1791,11 +1838,13 @@ function openFeePaymentEdit(feeId, idx, after, fb){
   }});
 }
 
-function openTuitionBreakdown(ym){
+function openTuitionBreakdown(ym){ openTuitionPayments(ym); }
+function openTuitionPayments(ym){
   const list = feePaymentsIn(ym).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
   const total = round2(list.reduce((a,p)=>a+p.amount,0));
   openModal(`
     ${modalHead('Tuition received — '+monthLabel(ym))}
+    <div class="chip-select" style="margin-bottom:10px;"><button type="button" class="chip on">Payments</button><button type="button" class="chip" data-tb-mode="student">By student</button></div>
     <div class="page-sub" style="margin-bottom:10px;">Counted by the day each payment was recorded, not the month the fee is for. ${fmtMoney(total)} from ${list.length} payment${list.length===1?'':'s'}.</div>
     ${list.length===0 ? `<div class="empty">No fee payments recorded in ${monthLabel(ym)} yet.</div>` :
       `<div class="list">${list.map(p=>{ const st = studentById(p.studentId); return `<div class="item" data-fp="${escapeHTML(String(p.feeId))}|${p.idx}|${escapeHTML(String(p.studentId))}|${escapeHTML(String(p.feeMonth))}" style="cursor:pointer;">
@@ -1803,6 +1852,7 @@ function openTuitionBreakdown(ym){
           <div class="meta">fee for ${monthLabel(p.feeMonth)} · ${p.guessed?'no payment date recorded — counted in '+monthLabel(ym):shortDate(p.date)}</div></div>
         <div style="font-weight:700;white-space:nowrap;">${fmtMoney(p.amount)} <span style="font-weight:400;opacity:.6;">✎</span></div></div>`; }).join('')}</div><div class="hint" style="margin-top:8px;">Tap a payment to fix its date (which month it counts in), amount, or delete it.</div>`}
   `, {onMount:(root)=>{
+    const tm = root.querySelector('[data-tb-mode]'); if(tm) tm.addEventListener('click',()=>{ closeModal(); openTuitionByStudent(ym); });
     root.querySelectorAll('[data-fp]').forEach(el=>el.addEventListener('click',()=>{
       const [feeId,idx,studentId,feeMonth] = el.dataset.fp.split('|');
       closeModal(); openFeePaymentEdit(feeId, Number(idx), ()=>openTuitionBreakdown(ym), {studentId, feeMonth});
@@ -1866,14 +1916,14 @@ function moneyLogHTML(){
         <div class="hint" id="mHint"></div>
       </div>
       <div class="field"><label>Source</label>
-        <div class="chip-select">${INCOME_SOURCES.map(c=>`<button type="button" class="chip ${c===src?'on':''}" data-income-src="${escapeHTML(c)}">${escapeHTML(c)}</button>`).join('')}</div>
+        <div class="chip-select">${incSources().map(c=>`<button type="button" class="chip ${c===src?'on':''}" data-income-src="${escapeHTML(c)}">${escapeHTML((catEmoji(c,'income')?catEmoji(c,'income')+' ':'')+c)}</button>`).join('')}<button type="button" class="chip" id="mCatEdit">✎ Edit</button></div>
         <div class="hint">Tuition fees are not entered here — they're counted automatically from Fees.</div>
       </div>
       <div class="field"><label>Note (optional)</label><input id="mNote" type="text" maxlength="120" autocomplete="off" value="${escapeHTML(moneyDraft.note)}"></div>
       <div class="field"><label>Date</label><input id="mDate" type="date" value="${escapeHTML(moneyDraft.date||today)}"></div>
       <button class="btn primary block" id="mAdd">Add income</button>`;
   } else {
-    const cats = EXPENSE_CATEGORIES[moneyKind], cat = moneyCategoryFor(moneyKind);
+    const cats = expCats(moneyKind), cat = moneyCategoryFor(moneyKind);
     form = `
       <div class="chip-select" style="margin-bottom:14px;">
         ${Object.keys(EXPENSE_KINDS).map(k=>`<button type="button" class="chip ${moneyKind===k?'on':''}" data-money-kind="${k}">${EXPENSE_KINDS[k]}</button>`).join('')}
@@ -1884,7 +1934,7 @@ function moneyLogHTML(){
         <div class="hint" id="mHint"></div>
       </div>
       <div class="field"><label>Category</label>
-        <div class="chip-select">${cats.map(c=>`<button type="button" class="chip ${c===cat?'on':''}" data-money-cat="${escapeHTML(c)}">${escapeHTML(c)}</button>`).join('')}</div>
+        <div class="chip-select">${cats.map(c=>`<button type="button" class="chip ${c===cat?'on':''}" data-money-cat="${escapeHTML(c)}">${escapeHTML((catEmoji(c,moneyKind)?catEmoji(c,moneyKind)+' ':'')+c)}</button>`).join('')}<button type="button" class="chip" id="mCatEdit">✎ Edit</button></div>
       </div>
       <div class="field"><label>Note (optional)</label><input id="mNote" type="text" maxlength="120" autocomplete="off" value="${escapeHTML(moneyDraft.note)}"></div>
       <div class="field"><label>Date</label><input id="mDate" type="date" value="${escapeHTML(moneyDraft.date||today)}"></div>
@@ -1941,7 +1991,7 @@ function addEntryFromForm(){
 function openIncomeEdit(id){
   const i = (DB.incomes||[]).find(x=>x.id===id);
   if(!i) return;
-  const srcs = INCOME_SOURCES.slice(); if(i.source && srcs.indexOf(i.source)<0) srcs.unshift(i.source);
+  const srcs = incSources(); if(i.source && srcs.indexOf(i.source)<0) srcs.unshift(i.source);
   openModal(`
     ${modalHead('Edit income')}
     <div class="field"><label>Amount (৳)</label><input id="iAmount" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(i.amount))}"></div>
@@ -1964,6 +2014,223 @@ function openIncomeEdit(id){
       if(!confirm('Delete this income entry?')) return;
       DB.incomes = DB.incomes.filter(x=>x.id!==id);
       saveDB(); closeModal(); toast('Deleted'); render();
+    });
+  }});
+}
+
+/* ---------- helpers for the detail views ---------- */
+function monthsBack(ym, n){ const o=[]; for(let i=n-1;i>=0;i--) o.push(shiftMonth(ym,-i)); return o; }
+function monthShort(ym){ const [y,m]=ym.split('-'); return new Date(y,m-1,1).toLocaleDateString('en-US',{month:'short'}); }
+function earnCardHTML(ym){
+  const tuition = feesReceivedIn(ym), bySrc = {};
+  incomesFor(ym).forEach(i=>{ const n = i.source||'Other'; bySrc[n] = round2((bySrc[n]||0)+(Number(i.amount)||0)); });
+  const names = Object.keys(bySrc).sort((a,b)=>bySrc[b]-bySrc[a]);
+  const total = round2(tuition + names.reduce((a,n)=>a+bySrc[n],0));
+  if(total<=0) return '';
+  const row = (attr,label,val)=>`<div class="two-col-item" style="cursor:pointer;" ${attr}><span>${label}</span><b>${fmtMoney(val)}</b></div>`;
+  return `<div class="card"><div class="card-title">Earnings in ${monthLabel(ym)} — ${fmtMoney(total)}</div>
+    ${tuition>0 ? row('data-earn-tuition="1"','🎓 Tuition',tuition) : ''}
+    ${names.map(n=>row('data-earn-src="'+escapeHTML(n)+'"',escapeHTML((catEmoji(n,'income')?catEmoji(n,'income')+' ':'')+n),bySrc[n])).join('')}
+    <div class="hint" style="margin-top:6px;">Tap a line for its history. Tuition is counted by payment date.</div></div>`;
+}
+function trendBarsHTML(items, color){
+  const max = items.reduce((a,x)=>Math.max(a,x.value),0);
+  return `<div style="display:flex;gap:6px;align-items:flex-end;margin:10px 0 4px;">${items.map(x=>`
+    <div style="flex:1;text-align:center;" title="${escapeHTML(x.label)}: ${fmtMoney(x.value)}">
+      <div style="font-size:10px;opacity:.75;white-space:nowrap;">${x.value>0?fmtMoney(Math.round(x.value)):''}</div>
+      <div style="height:${max>0?Math.max(x.value>0?3:0,Math.round(x.value/max*56)):0}px;background:${color||'var(--teal)'};border-radius:3px 3px 0 0;margin-top:2px;"></div>
+      <div style="font-size:10px;opacity:.7;margin-top:2px;">${escapeHTML(x.label)}</div></div>`).join('')}</div>`;
+}
+function statCell(num, lbl){ return `<div class="stat"><div class="num">${num}</div><div class="lbl">${escapeHTML(lbl)}</div></div>`; }
+
+/* ---------- generic "one category / one source" detail ----------
+   cfg: {title, items:[{id,date,amount,note,raw}], rowHTML(raw), rowAttr, onEdit(id), color} */
+function openEntryDetail(cfg){
+  const cur = todayISO().slice(0,7), months = monthsBack(cur,6);
+  const items = cfg.items.filter(x=>okISO(x.date));
+  const byM = {}; items.forEach(x=>{ const m=x.date.slice(0,7); byM[m]=round2((byM[m]||0)+(Number(x.amount)||0)); });
+  const total = round2(items.reduce((a,x)=>a+(Number(x.amount)||0),0));
+  const thisM = byM[cur]||0, lastM = byM[shiftMonth(cur,-1)]||0;
+  const avg6 = round2(months.reduce((a,m)=>a+(byM[m]||0),0)/6);
+  const biggest = items.reduce((b,x)=>Math.max(b,Number(x.amount)||0),0);
+  openModal(`
+    ${modalHead(cfg.title)}
+    <div class="grid2" style="margin-bottom:6px;">
+      ${statCell(fmtMoney(thisM),'This month')}${statCell(fmtMoney(lastM),'Last month')}
+      ${statCell(fmtMoney(Math.round(avg6)),'6-month average / month')}${statCell(fmtMoney(biggest),'Biggest single entry')}
+    </div>
+    <div class="hint">All time: ${fmtMoney(total)} from ${items.length} entr${items.length===1?'y':'ies'}.</div>
+    ${trendBarsHTML(months.map(m=>({label:monthShort(m),value:byM[m]||0})), cfg.color)}
+    <div class="field" style="margin-top:12px;"><input id="cdQ" type="text" placeholder="Search note or amount" autocomplete="off"></div>
+    <div class="list" id="cdList"></div>
+  `,{onMount:(root)=>{
+    const box = root.querySelector('#cdList'), q = root.querySelector('#cdQ');
+    function draw(){
+      const t = q.value.trim().toLowerCase();
+      const rows = items.filter(x=>!t || String(x.note||'').toLowerCase().includes(t) || String(x.amount).includes(t))
+        .sort((a,b)=>b.date.localeCompare(a.date) || String(b.created||'').localeCompare(String(a.created||''))).slice(0,60);
+      box.innerHTML = rows.length ? rows.map(x=>cfg.rowHTML(x.raw)).join('') : `<div class="empty" style="padding:14px;">${t?'No match.':'No entries yet.'}</div>`;
+      box.querySelectorAll('[data-exp-edit],[data-inc-edit]').forEach(n=>n.addEventListener('click',()=>{ closeModal(); cfg.onEdit(n.dataset.expEdit||n.dataset.incEdit); }));
+    }
+    q.addEventListener('input', draw); draw();
+  }});
+}
+function openCategoryDetail(name, kindFilter){
+  kindFilter = kindFilter||'all';
+  const items = (DB.expenses||[]).filter(e=>(e.category||'Other')===name && (kindFilter==='all'||kindOf(e)===kindFilter))
+    .map(e=>({id:e.id,date:edate(e),amount:e.amount,note:e.note,created:e.createdAt,raw:e}));
+  const kinds = Array.from(new Set(items.map(x=>kindOf(x.raw)))).map(k=>EXPENSE_KINDS[k]);
+  openEntryDetail({title:(catEmoji(name,kindFilter)+' '+name).trim()+(kinds.length>1?' (all types)':kinds.length===1&&kindFilter==='all'?' · '+kinds[0]:''),
+    items, rowHTML:e=>expenseItemHTML(e,true), onEdit:openExpenseEdit, color:'var(--amber)'});
+}
+function openSourceDetail(name){
+  const items = (DB.incomes||[]).filter(i=>(i.source||'Other')===name).map(i=>({id:i.id,date:String(i.date||''),amount:i.amount,note:i.note,created:i.createdAt,raw:i}));
+  openEntryDetail({title:(catEmoji(name,'income')+' '+name).trim(), items, rowHTML:i=>incomeItemHTML(i,true), onEdit:openIncomeEdit, color:'var(--teal)'});
+}
+
+/* ---------- tuition: one student's earnings ---------- */
+function openStudentEarnings(studentId){
+  const s = studentById(studentId); if(!s){ toast('Student not found'); return; }
+  const cur = todayISO().slice(0,7), months = monthsBack(cur,6);
+  const pays = [];
+  (DB.fees||[]).filter(f=>f && f.studentId===studentId).forEach(f=>feePayments(f).forEach((p,i)=>
+    pays.push({date:p.date||(f.month?f.month+'-01':''), amount:p.amount, feeMonth:f.month, feeId:f.id, idx:i, guessed:!p.date})));
+  const byM = {}; pays.forEach(p=>{ const m=monthOf(p.date); byM[m]=round2((byM[m]||0)+p.amount); });
+  const total = round2(pays.reduce((a,p)=>a+p.amount,0));
+  // fee months: from joining (max 12 months back) to now, plus any month that has a record
+  const start = (function(){ const j = s.joiningDate ? s.joiningDate.slice(0,7) : null, lim = shiftMonth(cur,-11); return j && j>lim ? j : lim; })();
+  const rec = new Set((DB.fees||[]).filter(f=>f && f.studentId===studentId && f.month).map(f=>f.month));
+  const fm = []; for(let m=start; m<=cur; m=shiftMonth(m,1)) fm.push(m);
+  rec.forEach(m=>{ if(fm.indexOf(m)<0) fm.push(m); });
+  fm.sort().reverse();
+  const rows = fm.map(m=>({m, st:feeStatusFor(s,m)})).filter(x=>x.st.expected>0 || (x.st.record && x.st.paid>0));
+  const due = round2(rows.filter(x=>x.m<=cur).reduce((a,x)=>a+x.st.due,0));
+  openModal(`
+    ${modalHead(escapeHTML(s.name)+' — earnings')}
+    <div class="grid2" style="margin-bottom:6px;">
+      ${statCell(fmtMoney(byM[cur]||0),'Received this month')}${statCell(fmtMoney(total),'Received, all time')}
+      ${statCell(fmtMoney(due),'Still due (last 12 months incl. now)')}${statCell(fmtMoney(s.monthlyFee||0),'Monthly fee')}
+    </div>
+    ${trendBarsHTML(months.map(m=>({label:monthShort(m),value:byM[m]||0})),'var(--teal)')}
+    <div class="hint" style="margin-bottom:10px;">Bars = money received per calendar month (by payment date).</div>
+    <div class="card-title">Fee months</div>
+    <div class="list">${rows.length ? rows.map(x=>`<div class="item"><div class="body"><div class="title">${monthLabel(x.m)}</div>
+      <div class="meta">expected ${fmtMoney(x.st.expected)} · paid ${fmtMoney(x.st.paid)}</div></div>
+      <span class="badge ${feeBadgeClass(x.st.status)}">${x.st.status}${x.st.status==='Advance'?' +'+fmtMoney(x.st.advance):x.st.due>0?' −'+fmtMoney(x.st.due):''}</span></div>`).join('') : '<div class="empty" style="padding:14px;">No fee months yet.</div>'}</div>
+    <div class="card-title" style="margin-top:14px;">Payments (tap to fix date / amount)</div>
+    <div class="list">${pays.length ? pays.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(p=>`<div class="item" style="cursor:pointer;" data-sp="${escapeHTML(String(p.feeId))}|${p.idx}|${escapeHTML(String(p.feeMonth))}">
+      <div class="body"><div class="title">${fmtMoney(p.amount)} ✎</div><div class="meta">fee for ${monthLabel(p.feeMonth)} · ${p.guessed?'no payment date':shortDate(p.date)+' '+p.date.slice(0,4)}</div></div></div>`).join('') : '<div class="empty" style="padding:14px;">No payments recorded.</div>'}</div>
+  `,{onMount:(root)=>{
+    root.querySelectorAll('[data-sp]').forEach(n=>n.addEventListener('click',()=>{
+      const [feeId,idx,feeMonth] = n.dataset.sp.split('|');
+      closeModal(); openFeePaymentEdit(feeId, Number(idx), ()=>openStudentEarnings(studentId), {studentId, feeMonth});
+    }));
+  }});
+}
+function openTuitionByStudent(ym){
+  const list = feePaymentsIn(ym), by = {};
+  list.forEach(p=>{ by[p.studentId] = round2((by[p.studentId]||0)+p.amount); });
+  const ids = Object.keys(by).sort((a,b)=>by[b]-by[a]), total = round2(ids.reduce((a,i)=>a+by[i],0));
+  openModal(`
+    ${modalHead('Tuition received — '+monthLabel(ym))}
+    <div class="chip-select" style="margin-bottom:10px;"><button type="button" class="chip" data-tb-mode="payments">Payments</button><button type="button" class="chip on">By student</button></div>
+    <div class="page-sub" style="margin-bottom:10px;">${fmtMoney(total)} from ${ids.length} student${ids.length===1?'':'s'}. Tap a student for their full earnings history.</div>
+    ${ids.length===0 ? `<div class="empty">No fee payments recorded in ${monthLabel(ym)} yet.</div>` :
+      `<div class="list">${ids.map(id=>{ const st = studentById(id); return `<div class="item" style="cursor:pointer;" data-tb-stu="${escapeHTML(id)}"><div class="body"><div class="title">${escapeHTML(st?st.name:'(removed student)')}</div></div><div style="font-weight:700;white-space:nowrap;">${fmtMoney(by[id])}</div></div>`; }).join('')}</div>`}
+  `,{onMount:(root)=>{
+    root.querySelector('[data-tb-mode]').addEventListener('click',()=>{ closeModal(); openTuitionPayments(ym); });
+    root.querySelectorAll('[data-tb-stu]').forEach(n=>n.addEventListener('click',()=>{ closeModal(); openStudentEarnings(n.dataset.tbStu); }));
+  }});
+}
+
+/* ---------- Manage categories (expense types + income sources) ---------- */
+let catMgrTab = 'personal';
+function catUsage(kind, name){
+  if(kind==='income') return (DB.incomes||[]).filter(i=>(i.source||'Other')===name).length;
+  return (DB.expenses||[]).filter(e=>kindOf(e)===kind && (e.category||'Other')===name).length;
+}
+function catOrphans(kind){
+  const known = new Set((kind==='income'?srcListAll():catListAll(kind)).map(x=>x.n)), m = {};
+  (kind==='income' ? (DB.incomes||[]) : (DB.expenses||[]).filter(e=>kindOf(e)===kind)).forEach(x=>{
+    const n = (kind==='income' ? x.source : x.category) || 'Other'; if(!known.has(n)) m[n]=(m[n]||0)+1; });
+  return Object.keys(m).map(n=>({n,count:m[n]}));
+}
+function catRelabel(kind, from, to){
+  if(kind==='income'){ (DB.incomes||[]).forEach(i=>{ if((i.source||'Other')===from) i.source = to; }); }
+  else (DB.expenses||[]).forEach(e=>{ if(kindOf(e)===kind && (e.category||'Other')===from) e.category = to; });
+}
+function openCategoryManager(tab){
+  if(tab) catMgrTab = tab;
+  const kind = catMgrTab, isInc = kind==='income';
+  const list = isInc ? srcListAll() : catListAll(kind), orph = catOrphans(kind);
+  const tabs = Object.keys(EXPENSE_KINDS).map(k=>[k,EXPENSE_KINDS[k]]).concat([['income','Income']]);
+  openModal(`
+    ${modalHead('Categories')}
+    <div class="chip-select" style="margin-bottom:12px;">${tabs.map(t=>`<button type="button" class="chip ${kind===t[0]?'on':''}" data-cm-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
+    <div class="hint" style="margin-bottom:8px;">${isInc?'Sources you can pick when adding income. Tuition is automatic from Fees.':'Categories for '+EXPENSE_KINDS[kind]+' expenses.'} Renaming updates your old entries too.</div>
+    <div class="list">${list.map((c,i)=>{ const n = catUsage(kind,c.n); return `<div class="item">
+      <div class="body"><div class="title">${escapeHTML((c.e?c.e+' ':'')+c.n)}${c.h?' <span style="opacity:.6;font-weight:400;">(hidden)</span>':''}</div>
+        <div class="meta">${n} entr${n===1?'y':'ies'}${c.b>0?' · budget '+fmtMoney(c.b)+'/month':''}</div></div>
+      <div style="white-space:nowrap;"><button class="btn sm ghost" data-cm-up="${i}" ${i===0?'disabled':''}>↑</button><button class="btn sm ghost" data-cm-down="${i}" ${i===list.length-1?'disabled':''}>↓</button><button class="btn sm" data-cm-edit="${i}">Edit</button></div></div>`; }).join('')}</div>
+    <div class="field" style="margin-top:12px;"><label>Add a ${isInc?'source':'category'}</label>
+      <div style="display:flex;gap:8px;"><input id="cmNew" type="text" maxlength="30" placeholder="${isInc?'e.g. Rice sale':'e.g. Medicine'}" autocomplete="off"><button class="btn primary" id="cmAdd">Add</button></div></div>
+    ${orph.length ? `<div class="card-title" style="margin-top:14px;">In your entries but not in the list</div>
+      <div class="list">${orph.map((o,i)=>`<div class="item"><div class="body"><div class="title">${escapeHTML(o.n)}</div><div class="meta">${o.count} entr${o.count===1?'y':'ies'}</div></div><button class="btn sm" data-cm-orph="${i}">Add to list</button></div>`).join('')}</div>` : ''}
+  `,{onMount:(root)=>{
+    const back = ()=>{ closeModal(); render(); openCategoryManager(); };
+    root.querySelectorAll('[data-cm-tab]').forEach(b=>b.addEventListener('click',()=>{ closeModal(); openCategoryManager(b.dataset.cmTab); }));
+    const move = (i,d)=>{ const l=list.slice(); const j=i+d; if(j<0||j>=l.length) return; const t=l[i]; l[i]=l[j]; l[j]=t; catPersist(kind,l); back(); };
+    root.querySelectorAll('[data-cm-up]').forEach(b=>b.addEventListener('click',()=>move(Number(b.dataset.cmUp),-1)));
+    root.querySelectorAll('[data-cm-down]').forEach(b=>b.addEventListener('click',()=>move(Number(b.dataset.cmDown),1)));
+    root.querySelectorAll('[data-cm-edit]').forEach(b=>b.addEventListener('click',()=>{ closeModal(); openCategoryEdit(kind, Number(b.dataset.cmEdit)); }));
+    root.querySelectorAll('[data-cm-orph]').forEach(b=>b.addEventListener('click',()=>{ const o=orph[Number(b.dataset.cmOrph)]; catPersist(kind, list.concat([{n:o.n,e:DEFAULT_EMOJI[o.n]||'',b:0,h:false}])); back(); }));
+    const add = ()=>{
+      const inp = root.querySelector('#cmNew'), n = inp.value.trim().slice(0,30);
+      if(!n){ toast('Type a name first'); return; }
+      if(list.some(x=>x.n.toLowerCase()===n.toLowerCase())){ toast('That name already exists'); return; }
+      catPersist(kind, list.concat([{n,e:'',b:0,h:false}])); back();
+    };
+    root.querySelector('#cmAdd').addEventListener('click', add);
+    root.querySelector('#cmNew').addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); add(); } });
+  }});
+}
+function openCategoryEdit(kind, i){
+  const isInc = kind==='income', list = isInc ? srcListAll() : catListAll(kind), c = list[i];
+  if(!c){ openCategoryManager(kind); return; }
+  const used = catUsage(kind,c.n);
+  openModal(`
+    ${modalHead('Edit '+(isInc?'source':'category'))}
+    <div class="field"><label>Name</label><input id="ceName" type="text" maxlength="30" value="${escapeHTML(c.n)}"></div>
+    <div class="field"><label>Emoji (optional)</label><input id="ceEmoji" type="text" maxlength="8" value="${escapeHTML(c.e||'')}"></div>
+    ${isInc?'':`<div class="field"><label>Monthly budget for this category (৳, blank = none)</label><input id="ceBudget" type="text" inputmode="decimal" value="${c.b>0?c.b:''}"></div>`}
+    <div class="field"><label><input type="checkbox" id="ceHide" ${c.h?'checked':''} style="width:auto;margin-right:6px;">Hide from the picker (old entries stay)</label></div>
+    <div class="hint" style="margin-bottom:8px;">${used} entr${used===1?'y uses':'ies use'} this ${isInc?'source':'category'}.</div>
+    <div class="modal-actions"><button class="btn danger" id="ceDel">Delete</button><button class="btn primary" id="ceSave">Save</button></div>
+  `,{onMount:(root)=>{
+    const back = ()=>{ closeModal(); render(); openCategoryManager(kind); };
+    root.querySelector('#ceSave').addEventListener('click',()=>{
+      const name = root.querySelector('#ceName').value.trim().slice(0,30);
+      if(!name){ toast('Name cannot be empty'); return; }
+      let b = 0;
+      if(!isInc){ const v = root.querySelector('#ceBudget').value.trim(); if(v){ const r = safeCalc(v); if(!r.ok || !(r.value>0)){ toast('Budget: enter a valid number or leave blank'); return; } b = round2(r.value); } }
+      const next = list.map(x=>Object.assign({},x));
+      const me = next[i]; me.e = root.querySelector('#ceEmoji').value.trim().slice(0,8); me.b = b; me.h = root.querySelector('#ceHide').checked;
+      if(name!==c.n){
+        const j = next.findIndex((x,k)=>k!==i && x.n.toLowerCase()===name.toLowerCase());
+        if(j>=0){
+          if(!confirm('"'+next[j].n+'" already exists. Merge "'+c.n+'" into it? '+used+' entr'+(used===1?'y':'ies')+' will be moved there.')) return;
+          catRelabel(kind, c.n, next[j].n); next.splice(i,1);
+        } else {
+          if(used>0 && !confirm('Rename "'+c.n+'" to "'+name+'"? '+used+' existing entr'+(used===1?'y':'ies')+' will be updated too.')) return;
+          catRelabel(kind, c.n, name); me.n = name;
+        }
+      }
+      catPersist(kind, next); toast('Saved'); back();
+    });
+    root.querySelector('#ceDel').addEventListener('click',()=>{
+      if(used>0){ toast('Used by '+used+' entr'+(used===1?'y':'ies')+' — hide it instead'); return; }
+      if(!confirm('Delete "'+c.n+'"?')) return;
+      catPersist(kind, list.filter((x,k)=>k!==i)); toast('Deleted'); back();
     });
   }});
 }
@@ -1995,7 +2262,7 @@ function moneyMonthHTML(){
   list.forEach(e=>{ const c=e.category||'Other'; byCat[c]=round2((byCat[c]||0)+(Number(e.amount)||0)); });
   const cats = Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]);
   const maxCat = cats.length ? byCat[cats[0]] : 0;
-  const budgetRows = ['personal','business'].filter(k=>budgetFor(k)>0).map(k=>{
+  const budgetRows = Object.keys(EXPENSE_KINDS).filter(k=>budgetFor(k)>0).map(k=>{
     const spent = sumAmt(expensesFor(ym,k)), b = budgetFor(k), pct = Math.min(100,Math.round(spent/b*100));
     const over = spent>b;
     return `<div style="margin-bottom:12px;">
@@ -2010,7 +2277,7 @@ function moneyMonthHTML(){
   <div class="field" style="margin-bottom:10px;"><input type="month" id="mMonth" value="${ym}"></div>
   ${planCardHTML(ym)}
   <div class="chip-select" style="margin-bottom:14px;">
-    ${[['all','All'],['personal','Personal'],['business','Teaching']].map(x=>`<button type="button" class="chip ${f===x[0]?'on':''}" data-money-filter="${x[0]}">${x[1]}</button>`).join('')}
+    ${[['all','All']].concat(Object.keys(EXPENSE_KINDS).map(k=>[k,EXPENSE_KINDS[k]])).map(x=>`<button type="button" class="chip ${f===x[0]?'on':''}" data-money-filter="${x[0]}">${x[1]}</button>`).join('')}
   </div>
   <div class="card">
     <div class="grid2">
@@ -2024,13 +2291,16 @@ function moneyMonthHTML(){
     <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">Budget</div><button class="btn sm" id="mBudgetBtn">Set budget</button></div>
     ${budgetRows || `<div class="hint">No monthly budget set.</div>`}
   </div>
+  ${earnCardHTML(ym)}
   <div class="card">
-    <div class="card-title">By category</div>
-    ${cats.length===0 ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : cats.map(c=>`
-      <div style="margin-bottom:12px;">
-        <div class="row"><span>${escapeHTML(c)}</span><span><b>${fmtMoney(byCat[c])}</b> · ${total>0?Math.round(byCat[c]/total*100):0}%</span></div>
-        <div class="progress-bar"><div style="width:${maxCat>0?Math.round(byCat[c]/maxCat*100):0}%"></div></div>
-      </div>`).join('')}
+    <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">By category</div><button class="btn sm" id="mCatManage">Manage</button></div>
+    ${cats.length===0 ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : cats.map(c=>{ const cb = catBudgetFor(c,f), em = catEmoji(c,f); return `
+      <div style="margin-bottom:12px;cursor:pointer;" data-cat-detail="${escapeHTML(c)}">
+        <div class="row"><span>${escapeHTML((em?em+' ':'')+c)}</span><span><b>${fmtMoney(byCat[c])}</b> · ${total>0?Math.round(byCat[c]/total*100):0}%${cb>0?` · of ${fmtMoney(cb)}`:''}</span></div>
+        <div class="progress-bar"><div style="width:${cb>0?Math.min(100,Math.round(byCat[c]/cb*100)):(maxCat>0?Math.round(byCat[c]/maxCat*100):0)}%;${cb>0&&byCat[c]>cb?'background:var(--err);':''}"></div></div>
+        ${cb>0&&byCat[c]>cb?`<div class="hint" style="color:var(--err);">Over by ${fmtMoney(round2(byCat[c]-cb))}</div>`:''}
+      </div>`; }).join('')}
+    <div class="hint">Tap a category to see its history.</div>
   </div>
   ${incs.length ? `<div class="card"><div class="card-title">Outside income</div><div class="list">${incs.map(i=>incomeItemHTML(i,true)).join('')}</div></div>` : ''}
   ${entries.length ? `<div class="card"><div class="card-title">Entries</div><div class="list">${entries.map(e=>expenseItemHTML(e,true)).join('')}</div></div>` : ''}`;
@@ -2295,11 +2565,16 @@ function bindMoney(){
     date.addEventListener('change', ()=>{ moneyDraft.date = date.value; });
     [amt,note].forEach(el=>el.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); addEntryFromForm(); } }));
     view.querySelector('#mAdd').addEventListener('click', addEntryFromForm);
+    const ce = view.querySelector('#mCatEdit'); if(ce) ce.addEventListener('click',()=>openCategoryManager(moneyMode==='income'?'income':moneyKind));
     moneyHintUpdate();
   } else if(moneyTab==='month'){
     view.querySelector('#mMonth').addEventListener('change', e=>{ moneyMonth = /^\d{4}-\d{2}$/.test(e.target.value) ? e.target.value : null; render(); });
     view.querySelectorAll('[data-money-filter]').forEach(b=>b.addEventListener('click',()=>{ moneyFilter=b.dataset.moneyFilter; render(); }));
     view.querySelector('#mBudgetBtn').addEventListener('click', openBudgetModal);
+    const cm = view.querySelector('#mCatManage'); if(cm) cm.addEventListener('click',()=>openCategoryManager(moneyFilter!=='all'?moneyFilter:'personal'));
+    view.querySelectorAll('[data-cat-detail]').forEach(n=>n.addEventListener('click',()=>openCategoryDetail(n.dataset.catDetail, moneyFilter)));
+    view.querySelectorAll('[data-earn-src]').forEach(n=>n.addEventListener('click',()=>openSourceDetail(n.dataset.earnSrc)));
+    const et = view.querySelector('[data-earn-tuition]'); if(et) et.addEventListener('click',()=>openTuitionBreakdown(moneyMonth || todayISO().slice(0,7)));
     view.querySelector('#mCarryBtn').addEventListener('click', ()=>openCarryModal(moneyMonth || todayISO().slice(0,7)));
   } else if(moneyTab==='dhar'){
     view.querySelector('#lNew').addEventListener('click', ()=>openLoanForm());

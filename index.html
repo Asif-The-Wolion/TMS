@@ -367,7 +367,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-08.1-sync';
+const APP_BUILD = '2026-10-11.1-sync-payments';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -1579,9 +1579,9 @@ function feePaymentsIn(ym){
   const out = [];
   (DB.fees||[]).forEach(f=>{
     if(!f) return;
-    feePayments(f).forEach(p=>{
+    feePayments(f).forEach((p,i)=>{
       const date = p.date || (f.month ? f.month+'-01' : '');
-      if(monthOf(date)===ym) out.push({studentId:f.studentId, feeMonth:f.month, date, amount:p.amount, guessed:!p.date});
+      if(monthOf(date)===ym) out.push({studentId:f.studentId, feeMonth:f.month, date, amount:p.amount, guessed:!p.date, feeId:f.id, idx:i});
     });
   });
   return out;
@@ -1745,6 +1745,52 @@ function stripAction(key, ym){
   render();
   window.scrollTo(0,0);
 }
+/* ---------- Edit ONE tuition payment (date / amount / delete) ----------
+   Fixes the "advance I pre-marked in Fees counts in the wrong month" problem: Money counts a payment
+   in the month of ITS date, so changing the date moves it to the month the cash really arrived. */
+function commitFeePayments(f, pays){
+  pays = pays.filter(x=>x && Number(x.amount)>0).map(x=>({date:x.date||'', amount:round2(Number(x.amount))}));
+  f.payments = pays;
+  f.paid = round2(pays.reduce((a,x)=>a+x.amount,0));
+  const last = pays.length ? pays[pays.length-1].date : '';
+  f.paymentDate = last || null;
+}
+function openFeePaymentEdit(feeId, idx, after, fb){
+  const f = (DB.fees||[]).find(x=>x && x.id===feeId) || (fb ? (DB.fees||[]).find(x=>x && x.studentId===fb.studentId && x.month===fb.feeMonth) : null);
+  if(!f){ toast('Payment not found'); return; }
+  const p = feePayments(f)[idx];
+  if(!p){ toast('Payment not found'); return; }
+  const s = studentById(f.studentId);
+  const hintFor = d => okISO(d) ? 'Counts as received in '+monthLabel(d.slice(0,7))+'.' : 'No valid date — it is counted in '+monthLabel(f.month)+' (the month of the fee).';
+  openModal(`
+    ${modalHead('Edit payment')}
+    <div class="page-sub" style="margin-bottom:12px;">${escapeHTML(s?s.name:'(removed student)')} · fee for ${monthLabel(f.month)}. The date decides which month this money counts in (Money → Tuition received / Spendable). The fee's total paid changes only if you change the amount.</div>
+    <div class="field"><label>Date received</label><input type="date" id="fp_date" value="${okISO(p.date)?p.date:''}"></div>
+    <div class="hint" id="fp_hint" style="margin:-6px 0 12px;">${hintFor(p.date)}</div>
+    <div class="field"><label>Amount (৳)</label><input type="number" id="fp_amount" value="${p.amount}"></div>
+    <div class="modal-actions"><button class="btn danger" id="fp_delBtn">Delete this payment</button><button class="btn primary" id="fp_saveBtn">Save</button></div>
+  `,{onMount:(root)=>{
+    const done = ()=>{ closeModal(); render(); if(typeof after==='function') after(); };
+    root.querySelector('#fp_date').addEventListener('input',e=>{ root.querySelector('#fp_hint').textContent = hintFor(e.target.value); });
+    root.querySelector('#fp_saveBtn').addEventListener('click',()=>{
+      const date = root.querySelector('#fp_date').value;
+      const amount = Number(root.querySelector('#fp_amount').value)||0;
+      if(!okISO(date)){ alert('Pick the date you actually received this money.'); return; }
+      if(amount<=0){ alert('Amount must be more than 0 — or use "Delete this payment".'); return; }
+      const pays = feePayments(f); if(!pays[idx]){ toast('Payment not found'); return; }
+      pays[idx] = {date, amount:round2(amount)};
+      commitFeePayments(f, pays);
+      saveDB(); done(); toast('Payment updated');
+    });
+    root.querySelector('#fp_delBtn').addEventListener('click',()=>{
+      if(!confirm('Delete this payment of '+fmtMoney(p.amount)+'? The fee\'s paid total goes down by that amount.')) return;
+      const pays = feePayments(f); pays.splice(idx,1);
+      commitFeePayments(f, pays);
+      saveDB(); done(); toast('Payment deleted');
+    });
+  }});
+}
+
 function openTuitionBreakdown(ym){
   const list = feePaymentsIn(ym).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
   const total = round2(list.reduce((a,p)=>a+p.amount,0));
@@ -1752,11 +1798,16 @@ function openTuitionBreakdown(ym){
     ${modalHead('Tuition received — '+monthLabel(ym))}
     <div class="page-sub" style="margin-bottom:10px;">Counted by the day each payment was recorded, not the month the fee is for. ${fmtMoney(total)} from ${list.length} payment${list.length===1?'':'s'}.</div>
     ${list.length===0 ? `<div class="empty">No fee payments recorded in ${monthLabel(ym)} yet.</div>` :
-      `<div class="list">${list.map(p=>{ const st = studentById(p.studentId); return `<div class="item">
+      `<div class="list">${list.map(p=>{ const st = studentById(p.studentId); return `<div class="item" data-fp="${escapeHTML(String(p.feeId))}|${p.idx}|${escapeHTML(String(p.studentId))}|${escapeHTML(String(p.feeMonth))}" style="cursor:pointer;">
         <div class="body"><div class="title">${escapeHTML(st?st.name:'(removed student)')}</div>
           <div class="meta">fee for ${monthLabel(p.feeMonth)} · ${p.guessed?'no payment date recorded — counted in '+monthLabel(ym):shortDate(p.date)}</div></div>
-        <div style="font-weight:700;white-space:nowrap;">${fmtMoney(p.amount)}</div></div>`; }).join('')}</div>`}
-  `, {});
+        <div style="font-weight:700;white-space:nowrap;">${fmtMoney(p.amount)} <span style="font-weight:400;opacity:.6;">✎</span></div></div>`; }).join('')}</div><div class="hint" style="margin-top:8px;">Tap a payment to fix its date (which month it counts in), amount, or delete it.</div>`}
+  `, {onMount:(root)=>{
+    root.querySelectorAll('[data-fp]').forEach(el=>el.addEventListener('click',()=>{
+      const [feeId,idx,studentId,feeMonth] = el.dataset.fp.split('|');
+      closeModal(); openFeePaymentEdit(feeId, Number(idx), ()=>openTuitionBreakdown(ym), {studentId, feeMonth});
+    }));
+  }});
 }
 function openOutsideBreakdown(ym){
   const list = incomesFor(ym).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
@@ -5241,6 +5292,7 @@ function openFeeEditForm(studentId, month){
     <div class="field"><label>Expected fee for THIS month (৳)</label><input type="number" id="fe_expected" value="${currentExpected||0}"></div>
     <div class="hint" style="margin-bottom:12px;">Defaults to their standard monthly fee (${fmtMoney(s.monthlyFee||0)}). Change it here for a one-off month — e.g. half fee for a mid-month join. Other months stay untouched.</div>
     <div class="field"><label>Paid amount (৳) — set to 0 to undo</label><input type="number" id="fe_amount" value="${f?f.paid:0}"></div>
+    ${(f && feePayments(f).length) ? `<div class="field"><label>Payments received — tap one to fix its date or amount</label><div class="list">${feePayments(f).map((p,i)=>`<div class="item" data-fe-pay="${i}" style="cursor:pointer;"><div class="body"><div class="title">${fmtMoney(p.amount)} ✎</div><div class="meta">${okISO(p.date)?shortDate(p.date):'no date — counted in '+monthLabel(month)}</div></div></div>`).join('')}</div></div>` : ''}
     <div class="grid2">
       <div class="field"><label>Payment date</label><input type="date" id="fe_date" value="${f&&f.paymentDate?f.paymentDate:todayISO()}"></div>
       <div class="field"><label>Method</label><select id="fe_method">${['Cash','bKash','Nagad','Bank','Other'].map(m=>`<option ${f&&f.method===m?'selected':''}>${m}</option>`).join('')}</select></div>
@@ -5251,6 +5303,9 @@ function openFeeEditForm(studentId, month){
       <button class="btn primary" id="fe_saveBtn">Save</button>
     </div>
   `,{onMount:(root)=>{
+    root.querySelectorAll('[data-fe-pay]').forEach(el=>el.addEventListener('click',()=>{
+      closeModal(); openFeePaymentEdit(f.id, Number(el.dataset.fePay), ()=>openFeeEditForm(studentId, month), {studentId, feeMonth:month});
+    }));
     root.querySelector('#fe_saveBtn').addEventListener('click',()=>{
       const amount = Number(root.querySelector('#fe_amount').value)||0;
       const expectedVal = Number(root.querySelector('#fe_expected').value)||0;

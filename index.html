@@ -793,7 +793,9 @@ function mergeIntoDefaults(parsed){
   if(!Array.isArray(merged.batchExams)) merged.batchExams = []; // backups from before batch exams
   ['incomes','loans','savingPots','savingTx'].forEach(k=>{ if(!Array.isArray(merged[k])) merged[k] = []; }); // backups from before Money v2
   if(!merged.settings.moneyCarry || typeof merged.settings.moneyCarry!=='object' || Array.isArray(merged.settings.moneyCarry)) merged.settings.moneyCarry = {};
-  if(!merged.settings.maghribStudentId){
+  // One-time migration for very old data only: auto-link "Safa" if the Maghrib-student setting
+  // was NEVER stored. If the key exists (even as null = "— none —"), the user chose that: never relink.
+  if(!Object.prototype.hasOwnProperty.call(parsed.settings||{}, 'maghribStudentId') && !merged.settings.maghribStudentId){
     const safa = (merged.students||[]).find(s=>s.name==='Safa');
     if(safa) merged.settings.maghribStudentId = safa.id;
   }
@@ -1216,8 +1218,12 @@ function buildDaySchedule(iso, maghribHHMM){
     const offset = Number(DB.settings.maghribOffsetMin)||20;
     const duration = Number(DB.settings.maghribDurationMin)||70;
     const linkedStudent = DB.settings.maghribStudentId ? studentById(DB.settings.maghribStudentId) : null;
+    // Maghrib class is OFF when no student is linked: no class slot, no Maghrib row in the list
+    // (the Maghrib time itself still shows in the card at the top of Today).
+    if(linkedStudent){
     items.push({start:fmt24(maghrib),end:fmt24(maghrib),title:'Maghrib',note:'Fetched automatically',type:'maghrib',studentId:null,startMin:toMinutes(maghrib),endMin:toMinutes(maghrib)});
-    if(startedByThen(linkedStudent?linkedStudent.id:null)){
+    }
+    if(linkedStudent && startedByThen(linkedStudent.id)){
       const slotStart = addMinutes(maghrib,offset);
       const slotEnd = addMinutes(slotStart,duration);
       items.push({
@@ -3986,7 +3992,11 @@ function renderScheduleEditor(){
 
 function bindScheduleEditor(){
   const view = document.getElementById('view');
-  view.querySelector('#doneEditScheduleBtn').addEventListener('click', ()=>{ todayEditMode=false; render(); });
+  // Done must behave exactly like Save Schedule (it used to just close and silently drop edits).
+  // harvestFormIntoSchedule is a hoisted function declaration, so calling it here is fine.
+  view.querySelector('#doneEditScheduleBtn').addEventListener('click', ()=>{
+    harvestFormIntoSchedule(); saveDB(); todayEditMode=false; render(); toast('Schedule saved');
+  });
 
   // Reads whatever is currently sitting in the form fields back into DB.schedule.
   // Called before Add/Delete so those actions never silently wipe edits you'd

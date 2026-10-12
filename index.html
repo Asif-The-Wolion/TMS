@@ -482,9 +482,11 @@ function defaultScheduleBlocks(){
    ========================================================================= */
 const SYNC_STATE_KEY='tp_sync_state_v1', SYNC_PRE_KEY='tp_sync_pre_v1', SYNC_CONFLICT_KEY='tp_sync_conflicts_v1', SYNC_INIT_KEY='tp_sync_init_v1', SYNC_DEV_KEY='tp_sync_dev_v1';
 const SYNC_COLLS=['students','classRecords','homework','attendance','exams','batchExams','fees','tasks','expenses','incomes','loans','savingPots','savingTx','notes','syllabus','studyPlan','offDays','sessionLogs','schedule','subjects'];
-const SYNC_NATURAL={attendance:1,fees:1,offDays:1,sessionLogs:1}; // same logical record can be created on two devices with different ids
+const SYNC_NATURAL={attendance:1,fees:1,offDays:1,sessionLogs:1,schedule:1}; // same logical record can be created on two devices with different ids
 const SYNC_LOCAL_SETTINGS=['sheetsWebAppUrl','sheetsAutoBackup','lastSheetsBackupAt','lastManualBackupAt','backupPin','theme','onboarded','syncOn','syncToken'];
-const SyncUI={state:'idle',msg:''};
+const SyncUI={state:'idle',msg:'',attempted:false};
+// Until the first sync attempt has finished, don't auto-create session logs from a factory schedule that is about to be replaced.
+function syncWaitingFirstSync(){ try{ return syncEnabled() && !syncLoadState().base && !SyncUI.attempted; }catch(e){ return false; } }
 let syncBusy=false, syncAgain=false, syncTimer=null, syncRetryTimer=null;
 
 function syncStable(v){
@@ -508,6 +510,7 @@ function syncKey(c,it){
     case 'fees': return 'f|'+it.studentId+'|'+it.month;
     case 'offDays': return 'o|'+it.date+'|'+(it.scope||'all')+'|'+(it.targetId||'');
     case 'sessionLogs': return 'l|'+it.date+'|'+(it.studentId||'')+'|'+(it.title||'')+'|'+(it.scheduledStart||'');
+    case 'schedule': return 'b|'+(it.start||'')+'|'+(it.end||'')+'|'+(it.title||'');
   }
   return it.id!==undefined ? 'i|'+it.id : 'h|'+syncHash(c,it);
 }
@@ -546,17 +549,28 @@ function syncCount(p){ let n=0; SYNC_COLLS.forEach(c=>{ if(c!=='schedule'&&c!=='
 // Pure 3-way merge. L = local payload, R = remote payload, base = {c:{coll:{key:hash}},s:{key:hash}} or null.
 function syncMerge(L,R,base){
   base=base||{c:{},s:{}};
-  let dflt=null; try{ dflt=defaultDB().settings; }catch(e){}
+  let dfltDB=null; try{ dfltDB=defaultDB(); }catch(e){}
+  const dflt=dfltDB?dfltDB.settings:null;
   const out=Object.assign({},L), stats={added:0,removed:0,updated:0,keptEdit:0,conflicts:0}, conflicts=[];
+  const pristineFirst=c=>{   // first sync ever AND this device still has the untouched factory list
+    const la=Array.isArray(L[c])?L[c]:[], ra=Array.isArray(R[c])?R[c]:[], bm=(base.c&&base.c[c])||{};
+    if(!dfltDB || Object.keys(bm).length || !ra.length || !Array.isArray(dfltDB[c]) || la.length!==dfltDB[c].length) return false;
+    const sig=arr=>arr.map(x=>syncHash(c,x)).sort().join(',');
+    return sig(la)===sig(dfltDB[c]);
+  };
+  const dropGhostLogs=pristineFirst('schedule');   // logs auto-made from a factory schedule that is about to be replaced
   SYNC_COLLS.forEach(c=>{
     const la=Array.isArray(L[c])?L[c]:[], ra=Array.isArray(R[c])?R[c]:[], bm=(base.c&&base.c[c])||{};
+    // A brand-new device starts with the factory schedule/subjects (random ids). On the very first sync those must
+    // give way to the real ones instead of being added on top of them (that would double your schedule).
+    if((c==='schedule'||c==='subjects') && pristineFirst(c)){ out[c]=ra.slice(); stats.added+=ra.length; return; }
     const rm=new Map(), lm=new Map();
     ra.forEach(it=>rm.set(syncKey(c,it),it)); la.forEach(it=>lm.set(syncKey(c,it),it));
     const res=[];
     la.forEach(it=>{
       const k=syncKey(c,it), hl=syncHash(c,it), hb=bm[k], r=rm.get(k);
       if(r===undefined){
-        if(hb===undefined) res.push(it);                         // new on this device
+        if(hb===undefined){ if(dropGhostLogs && c==='sessionLogs' && it && it.autoFilled===true){ stats.removed++; } else res.push(it); }   // new on this device (except ghost auto-logs)
         else if(hl===hb) stats.removed++;                        // deleted on the other device, untouched here
         else { res.push(it); stats.keptEdit++; }                 // edited here, deleted there -> keep the edit
       } else {
@@ -713,6 +727,7 @@ async function syncNow(reason){
     S.lastOk=new Date().toISOString(); syncSaveState(S);
     DB.settings.lastSheetsBackupAt=S.lastOk; syncPersistLocal();
     syncSet('idle');
+    try{ autoFillMissedSessionLogs(); }catch(e){}
     if(ROUTE.page==='settings'){ const el=document.getElementById('syncStatusText'); if(el) el.textContent=syncStatusLine(); }
     if(!syncSameMap(syncMap(syncPayload()),S.base)) syncAgain=true;  // edits made while we were syncing
   }catch(err){
@@ -720,7 +735,7 @@ async function syncNow(reason){
     const offline=(typeof navigator!=='undefined' && navigator.onLine===false) || (err && (err.name==='TypeError' || err.name==='AbortError'));
     if(offline) syncSet('offline'); else syncSet('error',String(err&&err.message||err));
   }finally{
-    syncBusy=false;
+    syncBusy=false; SyncUI.attempted=true;
     if(syncAgain){ syncAgain=false; syncSchedule(2000); }
   }
 }
@@ -3764,6 +3779,7 @@ function logSessionDeviation(scheduledStart, title, fields){
 // correctable same-day via "Correct start"/"Correct end" on Today's timeline.
 const SESSION_AUTOFILL_GRACE_MIN = 30;
 function autoFillMissedSessionLogs(){
+  if(typeof syncWaitingFirstSync==='function' && syncWaitingFirstSync()) return; // wait for the first sync so a factory schedule can't create ghost logs
   const iso = todayISO();
   const nowMin = nowMinutes();
   const maghribHHMM = (todayMaghribInfo && todayISOState===iso) ? todayMaghribInfo.maghrib : (dashboardMaghribCache||null);

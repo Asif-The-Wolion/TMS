@@ -367,7 +367,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-24.2-auto-budget';
+const APP_BUILD = '2026-10-24.3-saving';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -414,7 +414,7 @@ function defaultDB(){
       weeklyOffDay:null,
       monthlySalary:0,
       // Money section budgets (0 = no budget)
-      monthlyBudgetPersonal:0, monthlyBudgetBusiness:0,
+      monthlyBudgetPersonal:0, monthlyBudgetBusiness:0, monthlySavingTarget:0,
       moneyCarry:{},   // {'YYYY-MM': cash carried over, typed in by hand}
       // Google Sheets backup (push-only from the app; restore is on-demand/manual).
       sheetsWebAppUrl:'', sheetsAutoBackup:false, lastSheetsBackupAt:null,
@@ -1349,7 +1349,9 @@ let moneyMonth = null;                // Month tab override, 'YYYY-MM'
 let moneyFilter = 'all';              // Month tab: 'all' | 'personal' | 'business'
 // Typed-but-unsaved form text lives here, NOT only in the DOM, so any re-render
 // (category tap, tab switch) can't wipe it. See also moneyIsEditing() below.
-let moneyDraft = {amount:'', note:'', date:''};
+let moneyDraft = {amount:'', note:'', date:'', potName:''};
+let moneyPotId = null;                 // Log tab, Saving mode: chosen pot
+function moneyPotDefault(){ const pots = DB.savingPots||[]; return pots.some(p=>p.id===moneyPotId) ? moneyPotId : (pots[0] ? pots[0].id : null); }
 let calcExpr = '';
 let calcHistory = [];                 // session only, newest first: {expr,value}
 
@@ -1445,17 +1447,24 @@ function budgetFor(kind){
    If a kind has ANY visible category budget, its total budget is the SUM of those (automatic) and the manual total
    is ignored (kept in settings, comes back if the category budgets are removed). Otherwise the manual total applies. */
 function budgetedCats(kind){ return catListAll(kind).filter(x=>!x.h && x.b>0); }
+const SAVING_KEY = '§saving';        // internal key for the "Savings" row; never shown to the user
+function savingTarget(){ const v = Number(DB.settings.monthlySavingTarget); return isFinite(v) && v>0 ? round2(v) : 0; }
+function savedOutIn(ym){ return Math.max(0, netSavedIn(ym)); }   // money net-moved INTO savings in a month: it left the pocket, so it counts as spent
+function autoNote(bi){ return `total of ${bi.count} category budget${bi.count===1?'':'s'}${bi.target>0?' + saving target':''}`; }
 function budgetInfo(kind){
-  const cats = budgetedCats(kind), sum = round2(cats.reduce((a,x)=>a+x.b,0));
-  if(sum>0) return {total:sum, auto:true, count:cats.length};
-  return {total:budgetFor(kind), auto:false, count:0};
+  const cats = budgetedCats(kind), sum = round2(cats.reduce((a,x)=>a+x.b,0)), tgt = kind==='personal' ? savingTarget() : 0;
+  if(sum>0) return {total:round2(sum+tgt), auto:true, count:cats.length, target:tgt};     // saving target rides on top of the category budgets
+  return {total:budgetFor(kind), auto:false, count:0, target:0};
 }
-// Everything spent in a kind for a month, plus how much of it is in categories that have no (visible) budget.
+// Everything spent in a kind for a month (Personal also includes money put into savings), plus how much of it
+// is in categories that have no (visible) budget.
 function spentSplit(ym, kind){
   const names = new Set(budgetedCats(kind).map(x=>x.n)), byCat = {};
   let spent = 0, unb = 0;
   expensesFor(ym,kind).forEach(e=>{ const a = Number(e.amount)||0, c = e.category||'Other'; spent += a; byCat[c] = round2((byCat[c]||0)+a); if(!names.has(c)) unb += a; });
-  return {spent:round2(spent), unbudgeted:round2(unb), byCat};
+  const saved = kind==='personal' ? savedOutIn(ym) : 0;
+  if(saved>0){ spent += saved; byCat[SAVING_KEY] = saved; if(!(savingTarget()>0)) unb += saved; }
+  return {spent:round2(spent), unbudgeted:round2(unb), byCat, saved};
 }
 function overBudgetKinds(ym){
   const out = [];
@@ -1472,15 +1481,17 @@ function budgetTips(ym){
   const over = [], pace = [], burn = [], misc = [];
   kinds.forEach(k=>{
     const bi = budgetInfo(k), sp = spentSplit(ym,k), spent = sp.spent;
+    const reserve = k==='personal' ? Math.max(savingTarget(), sp.saved) : 0, expSpent = round2(spent-sp.saved), room = round2(bi.total-reserve);   // pace looks at real spending only, with the saving kept aside
     if(spent>bi.total){
       const worst = bi.auto ? budgetedCats(k).map(x=>({n:x.n, d:round2((sp.byCat[x.n]||0)-x.b)})).filter(x=>x.d>0).sort((a,b)=>b.d-a.d).slice(0,2) : [];
       if(worst.length) over.push({t:pre(k)+'Over because of '+worst.map(x=>x.n+' +'+fmtMoney(x.d)).join(', ')+'.', c:'err'});
+      else if(k==='personal' && savingTarget()>0 && sp.saved>savingTarget()) over.push({t:pre(k)+'Over because you saved '+fmtMoney(round2(sp.saved-savingTarget()))+' more than your target.', c:'err'});
       else if(bi.auto && sp.unbudgeted>0) over.push({t:pre(k)+'Over, and '+fmtMoney(sp.unbudgeted)+' of your spending is in categories with no budget.', c:'err'});
-    } else if(elapsed>=7 && spent>0){
-      const proj = Math.round(spent/elapsed*dim);
-      if(proj>bi.total){
-        const left = round2(bi.total-spent), perDay = Math.floor(left/dl);
-        pace.push({t:pre(k)+`At this pace you'll reach ${fmtMoney(proj)}, ${fmtMoney(proj-Math.round(bi.total))} over. `+(perDay>0 ? `Keep to ${fmtMoney(perDay)}/day for the remaining ${dl} day${dl===1?'':'s'} to stay in budget.` : `Only ${fmtMoney(left)} left for ${dl} day${dl===1?'':'s'}.`), c:'err'});
+    } else if(elapsed>=7 && expSpent>0){
+      const proj = Math.round(expSpent/elapsed*dim);
+      if(proj>room){
+        const left = round2(room-expSpent), perDay = Math.floor(left/dl);
+        pace.push({t:pre(k)+`At this pace you'll reach ${fmtMoney(proj)}, ${fmtMoney(proj-Math.round(room))} over. `+(left<=0 ? `Nothing is left for the rest of the month once your saving is kept.` : perDay>0 ? `Keep to ${fmtMoney(perDay)}/day for the remaining ${dl} day${dl===1?'':'s'} to stay in budget.` : `Only ${fmtMoney(left)} left for ${dl} day${dl===1?'':'s'}.`), c:'err'});
       }
     }
     if(bi.auto && elapsed<=20){
@@ -1581,19 +1592,21 @@ function openExpenseEdit(id){
 function openBudgetModal(){
   const auto = {}; Object.keys(EXPENSE_KINDS).forEach(k=>{ auto[k] = budgetInfo(k); });
   const fld = (id,k,label)=> auto[k].auto
-    ? `<div class="field"><label>${label}</label><input id="${id}" type="text" value="${fmtMoney(auto[k].total)}" disabled><div class="hint">Automatic: total of ${auto[k].count} category budget${auto[k].count===1?'':'s'}. Change them in Manage categories.</div></div>`
+    ? `<div class="field"><label>${label}</label><input id="${id}" type="text" value="${fmtMoney(auto[k].total)}" disabled><div class="hint">Automatic: ${autoNote(auto[k])}. Change them in Manage categories.</div></div>`
     : `<div class="field"><label>${label} (৳, 0 = none)</label><input id="${id}" type="text" inputmode="decimal" value="${budgetFor(k)||''}"></div>`;
   openModal(`
     ${modalHead('Monthly budget')}
     ${fld('bPersonal','personal','Personal')}
+    <div class="field"><label>Saving target per month (৳, 0 = none)</label><input id="bSaving" type="text" inputmode="decimal" value="${savingTarget()||''}"><div class="hint">Money you put into savings counts as spent, because it leaves your pocket. With category budgets, this target is added to your Personal total.</div></div>
     ${fld('bBusiness','business','Teaching')}
     ${fld('bFarm','farm','Farm')}
     <div class="modal-actions"><button class="btn primary" id="bSave">Save</button></div>
   `, {center:true, onMount: root=>{
     root.querySelector('#bSave').addEventListener('click',()=>{
-      const read = (id,k) => { if(auto[k].auto) return budgetFor(k); const v = root.querySelector(id).value.trim(); if(!v) return 0; const r = safeCalc(v); return r.ok && r.value>0 ? round2(r.value) : NaN; };
-      const p = read('#bPersonal','personal'), b = read('#bBusiness','business'), fm = read('#bFarm','farm');
-      if(isNaN(p) || isNaN(b) || isNaN(fm)){ toast('Enter a valid number, or leave blank'); return; }
+      const read = (id,k) => { if(auto[k] && auto[k].auto) return budgetFor(k); const v = root.querySelector(id).value.trim(); if(!v) return 0; const r = safeCalc(v); return r.ok && r.value>0 ? round2(r.value) : NaN; };
+      const p = read('#bPersonal','personal'), b = read('#bBusiness','business'), fm = read('#bFarm','farm'), sv = read('#bSaving','saving');
+      if(isNaN(p) || isNaN(b) || isNaN(fm) || isNaN(sv)){ toast('Enter a valid number, or leave blank'); return; }
+      DB.settings.monthlySavingTarget = sv;
       DB.settings.monthlyBudgetPersonal = p;
       DB.settings.monthlyBudgetBusiness = b;
       DB.settings.monthlyBudgetFarm = fm;
@@ -1784,10 +1797,11 @@ function moneyPlan(ym){
       if(lent) owedToMe += out; else toRepay += out;
     }
   });
-  const saved = netSavedIn(ym);
-  const spent = sumAmt(expensesFor(ym,'all'));
-  const canSpend = round2(fees + outside + carry + borrowedIn + repaidToMe - lentOut - repaidByMe - saved - toRepay);
-  return {fees,outside,carry,borrowedIn,repaidToMe,lentOut,repaidByMe,saved,toRepay,owedToMe:round2(owedToMe),canSpend,spent,left:round2(canSpend-spent)};
+  const saved = netSavedIn(ym), savedOut = Math.max(0, saved), takenOut = Math.max(0, -saved);
+  const spentExp = sumAmt(expensesFor(ym,'all'));
+  const spent = round2(spentExp + savedOut);                       // money put into savings left the pocket: it counts as spent
+  const canSpend = round2(fees + outside + carry + borrowedIn + repaidToMe - lentOut - repaidByMe + takenOut - toRepay);
+  return {fees,outside,carry,borrowedIn,repaidToMe,lentOut,repaidByMe,saved,savedOut,takenOut,toRepay,owedToMe:round2(owedToMe),canSpend,spent,spentExp,left:round2(canSpend-spent)};
 }
 
 function planCardHTML(ym){
@@ -1802,15 +1816,15 @@ function planCardHTML(ym){
     p.repaidToMe>0 ? line('Repayments you received', p.repaidToMe,'+') : '',
     p.lentOut>0 ? line('Lent out this month', p.lentOut,'−') : '',
     p.repaidByMe>0 ? line('Repayments you made', p.repaidByMe,'−') : '',
-    p.saved>0 ? line('Saved this month','' + p.saved,'−') : '',
-    p.saved<0 ? line('Taken out of savings', Math.abs(p.saved),'+') : '',
+    p.takenOut>0 ? line('Taken out of savings', p.takenOut,'+') : '',
     p.toRepay>0 ? line('Still to repay (due by this month)', p.toRepay,'−') : ''
   ].join('');
   let pace = '';
-  if(isCur && p.spent>0 && p.canSpend>0){
-    const proj = Math.round(p.spent/elapsed*dim);
-    pace = proj>p.canSpend
-      ? `<div class="plan-hint" style="color:var(--err);">At this pace you'll spend about ${fmtMoney(proj)} — ${fmtMoney(proj-Math.round(p.canSpend))} more than you can.</div>`
+  const avail = p.canSpend - p.savedOut;                            // what real spending can use once the saving is set aside
+  if(isCur && p.spentExp>0 && avail>0){
+    const proj = Math.round(p.spentExp/elapsed*dim);
+    pace = proj>avail
+      ? `<div class="plan-hint" style="color:var(--err);">At this pace you'll spend about ${fmtMoney(proj)} — ${fmtMoney(proj-Math.round(avail))} more than you can.</div>`
       : `<div class="plan-hint">At this pace you'll spend about ${fmtMoney(proj)} — inside what you can spend.</div>`;
   }
   const totalOwe = round2((DB.loans||[]).filter(l=>loanDir(l)==='borrowed').reduce((a,l)=>a+loanOutstanding(l),0));
@@ -1823,6 +1837,7 @@ function planCardHTML(ym){
       <div class="lbl">${p.canSpend<0?'You are short before spending anything':'Spendable this month'}</div>
     </div>
     <div class="two-col-item" style="margin-top:8px;"><span>Spent</span><b>${fmtMoney(p.spent)}</b></div>
+    ${p.savedOut>0 ? `<div class="plan-hint">Includes ${fmtMoney(p.savedOut)} you put into savings — it left your pocket.</div>` : ''}
     <div class="two-col-item"><span>${p.left<0?'Overspent by':'Remaining'}</span><b style="color:${p.left<0?'var(--err)':'var(--ok)'};">${fmtMoney(Math.abs(p.left))}</b></div>
     ${pace}
     ${p.owedToMe>0 ? `<div class="plan-hint">Not counted: ${fmtMoney(p.owedToMe)} owed to you, due by this month. Counting it before it arrives is how people overspend.</div>` : ''}
@@ -1965,6 +1980,14 @@ function renderMoney(){
 }
 
 /* ---------- Log tab (expense / income) ---------- */
+function savingItemHTML(t){
+  const pot = (DB.savingPots||[]).find(x=>x.id===t.potId), out = t.type==='out';
+  return `<div class="item" style="cursor:pointer;" data-saving-item>
+    <div class="dot" style="background:var(--teal)"></div>
+    <div class="body"><div class="title">🏦 ${out?'Taken out of savings':'Saved'}</div><div class="meta">${escapeHTML(pot?pot.name:'(deleted pot)')}${t.note?' · '+escapeHTML(t.note):''}</div></div>
+    <div style="font-weight:700;white-space:nowrap;">${out?'+':''}${fmtMoney(t.amount)}</div>
+  </div>`;
+}
 function incomeItemHTML(i, showDate){
   const note = (i.note||'').trim();
   return `<div class="item" style="cursor:pointer;" data-inc-edit="${escapeHTML(i.id)}">
@@ -1975,21 +1998,39 @@ function incomeItemHTML(i, showDate){
 }
 function moneyLogHTML(){
   const today = todayISO();
-  const isInc = moneyMode==='income';
+  const isInc = moneyMode==='income', isSav = moneyMode==='saving';
   const since = addDaysISO(today,-6);
   const exps = (DB.expenses||[]).filter(e=>okISO(edate(e)) && edate(e)>=since);
   const incs = (DB.incomes||[]).filter(i=>okISO(i.date) && i.date>=since);
   const byDay = {};
   exps.forEach(e=>{ (byDay[edate(e)] = byDay[edate(e)] || []).push({t:'e', x:e, c:String(e.createdAt||'')}); });
   incs.forEach(i=>{ (byDay[i.date] = byDay[i.date] || []).push({t:'i', x:i, c:String(i.createdAt||'')}); });
+  (DB.savingTx||[]).filter(t=>!t.opening && okISO(t.date) && t.date>=since && t.date<=today).forEach(t=>{ (byDay[t.date] = byDay[t.date] || []).push({t:'s', x:t, c:String(t.createdAt||'')}); });
   const days = Object.keys(byDay).sort().reverse();
   const todaySpent = sumAmt(exps.filter(e=>edate(e)===today));
   const weekSpent = sumAmt(exps.filter(e=>edate(e)<=today));
   const modeSwitch = `<div class="chip-select" style="margin-bottom:14px;">
-      <button type="button" class="chip ${!isInc?'on':''}" data-money-mode="expense">Expense</button>
-      <button type="button" class="chip ${isInc?'on':''}" data-money-mode="income">Income</button></div>`;
+      <button type="button" class="chip ${!isInc&&!isSav?'on':''}" data-money-mode="expense">Expense</button>
+      <button type="button" class="chip ${isInc?'on':''}" data-money-mode="income">Income</button>
+      <button type="button" class="chip ${isSav?'on':''}" data-money-mode="saving">🏦 Saving</button></div>`;
   let form;
-  if(isInc){
+  if(isSav){
+    const pots = DB.savingPots||[], pot = moneyPotDefault();
+    form = `
+      <div class="field">
+        <label>Amount (৳) — you can type things like 1000+500</label>
+        <input id="mAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${escapeHTML(moneyDraft.amount)}">
+        <div class="hint" id="mHint"></div>
+      </div>
+      <div class="field"><label>Where do you keep it?</label>
+        ${pots.length ? `<div class="chip-select">${pots.map(x=>`<button type="button" class="chip ${x.id===pot?'on':''}" data-saving-pot="${escapeHTML(x.id)}">${escapeHTML(x.name)}</button>`).join('')}</div>`
+          : `<input id="mPotName" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Home bank app" value="${escapeHTML(moneyDraft.potName||'')}"><div class="hint">First time: name the place. More pots can be added in the Savings tab.</div>`}
+        <div class="hint">It counts as spent (it leaves your pocket) and is added to this pot's balance.</div>
+      </div>
+      <div class="field"><label>Note (optional)</label><input id="mNote" type="text" maxlength="120" autocomplete="off" value="${escapeHTML(moneyDraft.note)}"></div>
+      <div class="field"><label>Date</label><input id="mDate" type="date" value="${escapeHTML(moneyDraft.date||today)}"></div>
+      <button class="btn primary block" id="mAdd">Save money</button>`;
+  } else if(isInc){
     const src = incomeSourceDefault();
     form = `
       <div class="field">
@@ -2025,7 +2066,7 @@ function moneyLogHTML(){
   return `
   <div class="money-cols">
     <div class="card">
-      <div class="card-title">${isInc?'Add income':'Add expense'}</div>
+      <div class="card-title">${isSav?'Put money into savings':isInc?'Add income':'Add expense'}</div>
       ${modeSwitch}${form}
     </div>
     <div class="card">
@@ -2034,8 +2075,9 @@ function moneyLogHTML(){
         const items = byDay[d].sort((a,b)=>b.c.localeCompare(a.c));
         const spent = sumAmt(items.filter(z=>z.t==='e').map(z=>z.x));
         const got = round2(items.filter(z=>z.t==='i').reduce((a,z)=>a+(Number(z.x.amount)||0),0));
-        return `<div class="row" style="margin:14px 0 6px;"><span class="sub-heading" style="margin:0;">${expDayLabel(d)}</span><span style="font-size:13px;font-weight:700;">${spent>0?fmtMoney(spent):''}${got>0?` <span class="pos">+${fmtMoney(got)}</span>`:''}</span></div>
-          <div class="list">${items.map(z=>z.t==='e'?expenseItemHTML(z.x,false):incomeItemHTML(z.x,false)).join('')}</div>`;
+        const sv = round2(items.filter(z=>z.t==='s').reduce((a,z)=>a+(z.x.type==='out'?-1:1)*(Number(z.x.amount)||0),0));
+        return `<div class="row" style="margin:14px 0 6px;"><span class="sub-heading" style="margin:0;">${expDayLabel(d)}</span><span style="font-size:13px;font-weight:700;">${spent>0?fmtMoney(spent):''}${sv!==0?` <span style="color:var(--teal);">🏦 ${sv>0?'':'−'}${fmtMoney(Math.abs(sv))}</span>`:''}${got>0?` <span class="pos">+${fmtMoney(got)}</span>`:''}</span></div>
+          <div class="list">${items.map(z=>z.t==='e'?expenseItemHTML(z.x,false):z.t==='s'?savingItemHTML(z.x):incomeItemHTML(z.x,false)).join('')}</div>`;
       }).join('')}
     </div>
   </div>`;
@@ -2052,7 +2094,18 @@ function addEntryFromForm(){
   const value = round2(r.value);
   const note = (moneyDraft.note||'').trim().slice(0,120);
   let msg;
-  if(moneyMode==='income'){
+  if(moneyMode==='saving'){
+    let potId = moneyPotDefault();
+    if(!potId){
+      const name = (moneyDraft.potName||'').trim().slice(0,40);
+      if(!name){ toast('Name the place you keep it, e.g. Home bank app'); const a = document.getElementById('mPotName'); if(a) a.focus(); return; }
+      const np = {id:uid('pot'), name, createdAt:new Date().toISOString()};
+      DB.savingPots.push(np); potId = np.id; moneyPotId = np.id;
+    }
+    const pot = DB.savingPots.find(x=>x.id===potId);
+    DB.savingTx.push({id:uid('stx'), potId, date, amount:value, type:'in', note, createdAt:new Date().toISOString()});
+    msg = `Saved ${fmtMoney(value)} · ${pot.name}`;
+  } else if(moneyMode==='income'){
     const source = incomeSourceDefault();
     DB.incomes.push({id:uid('inc'), date, amount:value, source, note, createdAt:new Date().toISOString()});
     msg = `Income ${fmtMoney(value)} · ${source}`;
@@ -2062,7 +2115,7 @@ function addEntryFromForm(){
     msg = `Added ${fmtMoney(value)} · ${cat}`;
   }
   saveDB();
-  moneyDraft = {amount:'', note:'', date:moneyDraft.date};
+  moneyDraft = {amount:'', note:'', date:moneyDraft.date, potName:''};
   toast(date===todayISO() ? msg : `${msg} on ${date}`);
   render();
   if(window.matchMedia && matchMedia('(pointer:fine)').matches){
@@ -2317,6 +2370,29 @@ function openCategoryEdit(kind, i){
   }});
 }
 
+/* The "🏦 Savings" row: money put into savings counts as spent. With a target it shows progress (reaching or beating it is never red). */
+function savingRowHTML(saved, totalSpent, maxBar){
+  const tgt = savingTarget();
+  if(!(tgt>0)){
+    return `
+      <div style="margin-bottom:12px;cursor:pointer;" data-saving-row>
+        <div class="row"><span>🏦 Savings</span><span><b>${fmtMoney(saved)}</b> · ${totalSpent>0?Math.round(saved/totalSpent*100):0}%</span></div>
+        <div class="progress-bar"><div style="width:${maxBar>0?Math.round(saved/maxBar*100):0}%;background:var(--teal);"></div></div>
+      </div>`;
+  }
+  const used = Math.round(saved/tgt*100), done = saved>=tgt;
+  return `
+      <div style="margin-bottom:12px;cursor:pointer;" data-saving-row>
+        <div class="row"><span>🏦 Savings</span><span><b>${fmtMoney(saved)}</b> of ${fmtMoney(tgt)} target</span></div>
+        <div class="progress-bar"><div style="width:${Math.min(100,used)}%;background:var(--teal);"></div></div>
+        <div class="hint" data-saving-left style="${done?'color:var(--ok);':''}">${done?'Target reached':`${fmtMoney(round2(tgt-saved))} to go · ${used}% of target`}</div>
+      </div>`;
+}
+function catRowsHTML(cats, byCat, f, totalSpent, maxCat, isCur, dim, elapsed, savedOut, showSaving){
+  const rows = cats.map(c=>({amt:byCat[c], html:catRowHTML(c, catEmoji(c,f), byCat[c], catBudgetFor(c,f), totalSpent, maxCat, isCur, dim, elapsed)}));
+  if(showSaving) rows.push({amt:savedOut, html:savingRowHTML(savedOut, totalSpent, Math.max(maxCat,savedOut))});
+  return rows.sort((a,b)=>b.amt-a.amt).map(r=>r.html).join('');     // stable: equal amounts keep their order
+}
 /* One "By category" row. Budgeted category: spent of budget + how much is LEFT (and % of the budget used,
    not share-of-total). Unbudgeted category: unchanged (share of total + bar relative to the biggest category). */
 function catRowHTML(c, em, spent, cb, total, maxCat, isCur, dim, elapsed){
@@ -2354,6 +2430,8 @@ function moneyMonthHTML(){
   const f = moneyFilter;
   const list = expensesFor(ym,f);
   const total = sumAmt(list);
+  const savedOut = (f==='all'||f==='personal') ? savedOutIn(ym) : 0, showSaving = (f==='all'||f==='personal') && (savedOut>0 || savingTarget()>0);
+  const totalSpent = round2(total + savedOut);                       // avg / projection / vs-last-month stay on real spending (total)
   const isCur = ym===cur;
   const dim = daysInMonthYM(ym);
   const elapsed = ym<cur ? dim : (isCur ? Number(todayISO().slice(8,10)) : 0);
@@ -2377,7 +2455,7 @@ function moneyMonthHTML(){
   const budgetRows = Object.keys(EXPENSE_KINDS).filter(k=>budgetInfo(k).total>0).map(k=>{
     const bi = budgetInfo(k), sp = spentSplit(ym,k), spent = sp.spent, b = bi.total, pct = Math.min(100,Math.round(spent/b*100));
     const over = spent>b;
-    const extra = bi.auto ? `<div class="hint">Automatic: total of ${bi.count} category budget${bi.count===1?'':'s'}${sp.unbudgeted>0?` · ${fmtMoney(sp.unbudgeted)} of this is in categories with no budget`:''}</div>` : '';
+    const extra = (bi.auto ? `<div class="hint">Automatic: ${autoNote(bi)}${sp.unbudgeted>0?` · ${fmtMoney(sp.unbudgeted)} of this is in categories with no budget`:''}</div>` : '') + (sp.saved>0 ? `<div class="hint">Includes ${fmtMoney(sp.saved)} put into savings.</div>` : '');
     return `<div style="margin-bottom:12px;">
       <div class="row"><span>${EXPENSE_KINDS[k]}</span><span><b>${fmtMoney(spent)}</b> of ${fmtMoney(b)}</span></div>
       <div class="progress-bar"><div style="width:${pct}%;${over?'background:var(--err);':''}"></div></div>
@@ -2395,7 +2473,7 @@ function moneyMonthHTML(){
   </div>
   <div class="card">
     <div class="grid2">
-      <div class="stat hot"><div class="num">${fmtMoney(total)}</div><div class="lbl">Spent in ${monthLabel(ym)}</div></div>
+      <div class="stat hot"><div class="num">${fmtMoney(totalSpent)}</div><div class="lbl">Spent in ${monthLabel(ym)}</div></div>
       <div class="stat"><div class="num">${fmtMoney(Math.round(avg))}</div><div class="lbl">Average per day</div></div>
       <div class="stat"><div class="num">${projected===null?'—':fmtMoney(Math.round(projected))}</div><div class="lbl">${projected===null?'Month-end projection (current month only)':'Projected by month end'}</div></div>
       <div class="stat"><div class="num">${vsHtml}</div><div class="lbl">${escapeHTML(vsLbl)}</div></div>
@@ -2409,7 +2487,7 @@ function moneyMonthHTML(){
   ${earnCardHTML(ym)}
   <div class="card">
     <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">By category</div><button class="btn sm" id="mCatManage">Manage</button></div>
-    ${cats.length===0 ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : cats.map(c=>{ const cb = catBudgetFor(c,f), em = catEmoji(c,f); return catRowHTML(c, em, byCat[c], cb, total, maxCat, isCur, dim, elapsed); }).join('')}
+    ${(cats.length===0 && !showSaving) ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : catRowsHTML(cats, byCat, f, totalSpent, maxCat, isCur, dim, elapsed, savedOut, showSaving)}
     <div class="hint">Tap a category to see its history.</div>
   </div>
   ${incs.length ? `<div class="card"><div class="card-title">Outside income</div><div class="list">${incs.map(i=>incomeItemHTML(i,true)).join('')}</div></div>` : ''}
@@ -2668,6 +2746,9 @@ function bindMoney(){
     view.querySelectorAll('[data-money-mode]').forEach(b=>b.addEventListener('click',()=>{ moneyMode=b.dataset.moneyMode; render(); }));
     view.querySelectorAll('[data-money-kind]').forEach(b=>b.addEventListener('click',()=>{ moneyKind=b.dataset.moneyKind; render(); }));
     view.querySelectorAll('[data-money-cat]').forEach(b=>b.addEventListener('click',()=>{ moneyLastCat[moneyKind]=b.dataset.moneyCat; render(); }));
+    view.querySelectorAll('[data-saving-pot]').forEach(b=>b.addEventListener('click',()=>{ moneyPotId=b.dataset.savingPot; render(); }));
+    const pn = view.querySelector('#mPotName'); if(pn) pn.addEventListener('input',()=>{ moneyDraft.potName = pn.value; });
+    view.querySelectorAll('[data-saving-item]').forEach(n=>n.addEventListener('click',()=>{ moneyTab='savings'; render(); window.scrollTo(0,0); }));
     view.querySelectorAll('[data-income-src]').forEach(b=>b.addEventListener('click',()=>{ moneyIncomeSrc=b.dataset.incomeSrc; render(); }));
     const amt = view.querySelector('#mAmount'), note = view.querySelector('#mNote'), date = view.querySelector('#mDate');
     amt.addEventListener('input', ()=>{ moneyDraft.amount = amt.value; moneyHintUpdate(); });
@@ -2683,6 +2764,7 @@ function bindMoney(){
     view.querySelector('#mBudgetBtn').addEventListener('click', openBudgetModal);
     const cm = view.querySelector('#mCatManage'); if(cm) cm.addEventListener('click',()=>openCategoryManager(moneyFilter!=='all'?moneyFilter:'personal'));
     view.querySelectorAll('[data-cat-detail]').forEach(n=>n.addEventListener('click',()=>openCategoryDetail(n.dataset.catDetail, moneyFilter)));
+    view.querySelectorAll('[data-saving-row]').forEach(n=>n.addEventListener('click',()=>{ moneyTab='savings'; render(); window.scrollTo(0,0); }));
     view.querySelectorAll('[data-earn-src]').forEach(n=>n.addEventListener('click',()=>openSourceDetail(n.dataset.earnSrc)));
     const et = view.querySelector('[data-earn-tuition]'); if(et) et.addEventListener('click',()=>openTuitionBreakdown(moneyMonth || todayISO().slice(0,7)));
     view.querySelector('#mCarryBtn').addEventListener('click', ()=>openCarryModal(moneyMonth || todayISO().slice(0,7)));

@@ -367,7 +367,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-24.3-saving';
+const APP_BUILD = '2026-10-25.3-reports';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -3484,7 +3484,7 @@ function renderDashboard(){
   <div class="card">
     <div class="card-title">Quick Stats</div>
     <div class="grid2">
-      <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${individualStudents().length}</div><div class="lbl">Active students</div></div>
+      <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${uniquePeople(individualStudents())}</div><div class="lbl">Active students</div></div>
       <div class="stat" data-stat-nav="students" style="cursor:pointer;"><div class="num">${DB.students.filter(s=>!s.isGroup).length}</div><div class="lbl">Total students</div></div>
       <div class="stat ${pendingHw>0?'hot':''}" data-stat-nav="homework" style="cursor:pointer;"><div class="num">${pendingHw}</div><div class="lbl">Pending homework</div></div>
       <div class="stat ${exams14.length>0?'hot':''}" data-stat-nav="exams" style="cursor:pointer;"><div class="num">${exams14.length}</div><div class="lbl">Upcoming exams</div></div>
@@ -3987,28 +3987,42 @@ function autoFillMissedSessionLogs(){
 // individually targeted, so they're simply not offered as an option — the
 // blanket "All ..." choice still covers them.
 function offTargetOptionsForType(type){
-  const seen = new Set();
-  const opts = [];
-  (DB.schedule||[]).filter(b=>b.type===type && b.studentId).forEach(b=>{
-    if(seen.has(b.studentId)) return;
-    seen.add(b.studentId);
-    const st = studentById(b.studentId);
-    opts.push({id:b.studentId, name: st?st.name:b.title});
+  // Who can be marked off for this kind of class. Built from your STUDENTS, not only from schedule blocks —
+  // so a private student appears even if their block isn't linked, and the Maghrib-slot student (that slot is
+  // generated live from Settings and is never stored in the schedule) is always there.
+  const linked = new Set((DB.schedule||[]).filter(b=>b.type===type && b.studentId).map(b=>b.studentId));
+  const mag = DB.settings.maghribStudentId;
+  if(type==='private' && mag && studentById(mag)) linked.add(mag);
+  const opts = [], seen = new Set();
+  const add = (id, name)=>{ if(seen.has(id)) return; seen.add(id); opts.push({id, name, noBlock:!linked.has(id)}); };
+  activeStudents().forEach(st=>{
+    const fits = type==='private' ? (!st.isGroup && st.type==='private' && !st.batchId)   // solo private students (not batch members)
+                                  : (st.isGroup && st.type!=='madrasa');                    // batch/group containers
+    if(fits || linked.has(st.id)) add(st.id, st.name);
   });
-  return opts;
+  (DB.schedule||[]).filter(b=>b.type===type && b.studentId).forEach(b=>{                    // linked blocks of inactive/removed students keep working as before
+    const st = studentById(b.studentId); add(b.studentId, st?st.name:b.title);
+  });
+  if(type==='private' && mag && studentById(mag)) add(mag, studentById(mag).name);
+  return opts.sort((a,b)=>a.name.localeCompare(b.name));
 }
 function offTargetFieldHTML(scope){
   if(scope!=='private' && scope!=='batch') return '';
   const opts = offTargetOptionsForType(scope);
   if(opts.length===0) return '';
   const allLabel = scope==='private' ? 'All private classes' : 'All batches/groups';
-  return `<div class="field"><label>Which one?</label>
-    <select id="od_target">
-      <option value="">${allLabel}</option>
-      ${opts.map(o=>`<option value="${o.id}">${escapeHTML(o.name)}</option>`).join('')}
-    </select>
-    <div class="hint">Leave as "${allLabel}" to mark every ${scope==='private'?'private class':'batch/group'} off today.</div>
+  const row = 'display:flex;align-items:center;gap:8px;padding:7px 0;';
+  return `<div class="field"><label>Which ones?</label>
+    <label style="${row}"><input type="checkbox" id="od_all" checked style="width:auto;"> <b>${allLabel}</b></label>
+    ${opts.map(o=>`<label style="${row}"><input type="checkbox" data-od-target="${escapeHTML(o.id)}" style="width:auto;"> <span>${escapeHTML(o.name)}${o.noBlock?' <span class="hint" style="display:inline;">(no block yet)</span>':''}</span></label>`).join('')}
+    <div class="hint">Leave "${allLabel}" ticked to mark every ${scope==='private'?'private class':'batch/group'} off. Or untick it and tick only the ones who are off — you can tick several.</div>
   </div>`;
+}
+function bindOffTargets(root){
+  const all = root.querySelector('#od_all'); if(!all) return;
+  const boxes = [...root.querySelectorAll('[data-od-target]')];
+  all.addEventListener('change',()=>{ if(all.checked) boxes.forEach(b=>b.checked=false); else if(!boxes.some(b=>b.checked)) all.checked = true; });
+  boxes.forEach(b=>b.addEventListener('change',()=>{ all.checked = !boxes.some(x=>x.checked); }));
 }
 function openOffDayForm(iso){
   openModal(`
@@ -4031,31 +4045,33 @@ function openOffDayForm(iso){
   `,{onMount:(root)=>{
     const scopeSelect = root.querySelector('#od_scope');
     const targetSlot = root.querySelector('#od_targetSlot');
-    targetSlot.innerHTML = offTargetFieldHTML(scopeSelect.value);
+    targetSlot.innerHTML = offTargetFieldHTML(scopeSelect.value); bindOffTargets(root);
     scopeSelect.addEventListener('change', ()=>{
-      targetSlot.innerHTML = offTargetFieldHTML(scopeSelect.value);
+      targetSlot.innerHTML = offTargetFieldHTML(scopeSelect.value); bindOffTargets(root);
     });
     root.querySelector('#od_makeup').addEventListener('change', (e)=>{
       root.querySelector('#od_makeupDateWrap').style.display = e.target.checked ? 'block' : 'none';
     });
     root.querySelector('#od_saveBtn').addEventListener('click',()=>{
       const scope = scopeSelect.value;
-      const targetEl = root.querySelector('#od_target');
-      const targetId = targetEl ? (targetEl.value || null) : null;
+      const ticked = [...root.querySelectorAll('[data-od-target]:checked')].map(x=>x.dataset.odTarget);
+      const targets = ticked.length ? ticked : [null];                  // nothing ticked = the blanket "All ..." choice
       DB.offDays = DB.offDays || [];
       // one off-day record per (date, scope, targetId) — re-saving the same
       // scope+target for the same date replaces it, but different scopes (or
       // different targets within the same scope) on the same date coexist.
-      DB.offDays = DB.offDays.filter(o=>!(o.date===iso && (o.scope||'all')===scope && (o.targetId||null)===(targetId||null)));
-      DB.offDays.push({
-        id: uid('off'), date: iso, scope, targetId,
-        reason: root.querySelector('#od_reason').value.trim(),
-        makeupNeeded: root.querySelector('#od_makeup').checked,
-        makeupDate: root.querySelector('#od_makeupDate').value || null,
-        makeupDone: false,
-        createdAt: new Date().toISOString()
+      DB.offDays = DB.offDays.filter(o=>!(o.date===iso && (o.scope||'all')===scope && targets.includes(o.targetId||null)));
+      targets.forEach(targetId=>{
+        DB.offDays.push({
+          id: uid('off'), date: iso, scope, targetId,
+          reason: root.querySelector('#od_reason').value.trim(),
+          makeupNeeded: root.querySelector('#od_makeup').checked,
+          makeupDate: root.querySelector('#od_makeupDate').value || null,
+          makeupDone: false,
+          createdAt: new Date().toISOString()
+        });
       });
-      saveDB(); closeModal(); render(); toast('Marked as off');
+      saveDB(); closeModal(); render(); toast(ticked.length>1 ? 'Marked '+ticked.length+' as off' : 'Marked as off');
     });
   }});
 }
@@ -4218,6 +4234,70 @@ function escapeHTML(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&'
    STUDENTS — list
    ========================================================================= */
 let studentsFilter = 'all';
+/* ---- Same person, two records (e.g. Safa in a batch AND privately) ----
+   The records stay separate on purpose: each one has its own fee, attendance, exams and schedule. A shared
+   personId links them. Class, school, guardian and area are kept identical on both; the name and everything else
+   stay per record (so you can still label them "Safa (private)" / "Safa"). */
+const SHARED_PERSON_FIELDS = [['class','Class'],['school','School'],['guardianName','Guardian'],['guardianPhone','Guardian phone'],['area','Area']];
+function normName(n){ return String(n||'').toLowerCase().replace(/\s+/g,' ').trim(); }
+function personSiblings(s){ return s && s.personId ? DB.students.filter(x=>x.id!==s.id && x.personId===s.personId) : []; }
+function uniquePeople(list){ const seen = new Set(); list.forEach(x=>seen.add(x.personId || x.id)); return seen.size; }
+// Only a REAL clash needs asking about: both records have a value and the values differ. A blank on one side is just filled in.
+function sharedDiffs(a,b){ return SHARED_PERSON_FIELDS.filter(([k])=>{ const x=String(a[k]||'').trim(), y=String(b[k]||'').trim(); return x && y && x!==y; }); }
+function syncSharedFields(s){ personSiblings(s).forEach(o=>SHARED_PERSON_FIELDS.forEach(([k])=>{ o[k] = s[k]||''; })); }
+// Link a and b; a's shared details win. The id is derived from the two record ids, so two devices that
+// link the same pair end up with the same personId instead of two competing ones.
+function linkPeople(a,b){
+  const pid = a.personId || b.personId || ('per_'+[a.id,b.id].sort()[0]);
+  const stale = [a.personId,b.personId].filter(x=>x && x!==pid);
+  DB.students.forEach(x=>{ if(x.id===a.id || x.id===b.id || stale.includes(x.personId)) x.personId = pid; });
+  const group = DB.students.filter(x=>x.personId===pid);
+  SHARED_PERSON_FIELDS.forEach(([k])=>{                                     // a's value wins; blanks are filled from whoever has one
+    const v = String(a[k]||'').trim() || group.map(x=>String(x[k]||'').trim()).find(Boolean) || '';
+    group.forEach(x=>{ x[k] = v; });
+  });
+}
+function unlinkPerson(s){
+  const pid = s.personId; if(!pid) return; delete s.personId;
+  const rest = DB.students.filter(x=>x.personId===pid); if(rest.length===1) delete rest[0].personId;
+}
+function possibleSamePeople(){
+  const out = [], list = DB.students.filter(x=>!x.isGroup && x.active!==false);
+  for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++){
+    const a = list[i], b = list[j];
+    if(!normName(a.name) || normName(a.name)!==normName(b.name)) continue;
+    if(a.personId && a.personId===b.personId) continue;
+    if((a.notSameAs||[]).includes(b.id) || (b.notSameAs||[]).includes(a.id)) continue;
+    out.push([a,b]);
+  }
+  return out;
+}
+function whichClassLabel(s){ const g = s.batchId ? studentById(s.batchId) : null; return s.isGroup ? 'Group' : (g ? 'Batch — '+g.name : typeLabel(s.type)); }
+function filledShared(s){ return SHARED_PERSON_FIELDS.filter(([k])=>String(s[k]||'').trim()).length; }
+// "Safa overall": every record of the same person side by side, with the totals you used to add up by hand.
+function personPanelHTML(s){
+  const sibs = personSiblings(s); if(!sibs.length) return '';
+  const recs = [s].concat(sibs), cur = todayISO().slice(0,7);
+  let exp=0, paid=0, due=0, P=0, A=0, L=0;
+  const rows = recs.map(r=>{
+    const f = feeStatusFor(r,cur), a = attendanceStatsFor(r.id);
+    exp += f.expected; paid += f.paid; due += f.due; P += a.present; A += a.absent; L += a.late;
+    const feeTxt = f.expected>0 ? `${fmtMoney(f.paid)} of ${fmtMoney(f.expected)} · ${f.status}` : 'no fee set';
+    const attTxt = a.pct!==null ? `${a.pct}% · came ${a.present+a.late} of ${a.total}` : 'no attendance yet';
+    const me = r.id===s.id;
+    return `<div class="row" style="padding:9px 0;border-top:1px solid var(--line);${me?'':'cursor:pointer;'}" ${me?'':`data-open-student="${r.id}"`}>
+      <span>${escapeHTML(whichClassLabel(r))}${me?' <span class="badge muted">this record</span>':' ›'}</span>
+      <span style="text-align:right;">${feeTxt}<br><span class="hint">${attTxt}</span></span></div>`;
+  }).join('');
+  const tot = P+A+L, pct = tot>0 ? Math.round(((P+L*0.5)/tot)*100) : null;
+  return `<div class="card" data-person-panel>
+    <div class="card-title">🔗 ${escapeHTML(s.name)} — all classes together</div>
+    <div class="row"><span>Fee this month</span><span><b>${fmtMoney(paid)}</b> of ${fmtMoney(exp)}${due>0?` · <span style="color:var(--err);">${fmtMoney(due)} due</span>`:''}</span></div>
+    <div class="row"><span>Attendance, all classes</span><span><b>${pct!==null?pct+'%':'—'}</b>${tot>0?` · came ${P+L} of ${tot}`:''}</span></div>
+    <div style="margin-top:6px;">${rows}</div>
+    <div class="hint">Class, school and guardian are the same on every record. Fees and attendance stay separate per class.</div>
+  </div>`;
+}
 function renderStudents(){
   const filters = [['all','All'],['madrasa','Madrasa'],['batch','Batches'],['private','Private']];
   let list = DB.students.slice();
@@ -4229,6 +4309,10 @@ function renderStudents(){
     ${filters.map(([id,label])=>`<div class="tab ${studentsFilter===id?'active':''}" data-filter="${id}">${label}</div>`).join('')}
   </div>
   <button class="btn primary block" id="addStudentBtn" style="margin-bottom:14px;">+ Add Student / Batch</button>
+  ${possibleSamePeople().map(([a,b])=>`<div class="card" data-dupe style="border-color:var(--amber);">
+    <div style="margin-bottom:8px;"><b>${escapeHTML(a.name)}</b> appears twice (${escapeHTML(whichClassLabel(a))} and ${escapeHTML(whichClassLabel(b))}). Same person?</div>
+    <div class="row" style="justify-content:flex-start;gap:8px;"><button class="btn sm primary" data-link-pair="${a.id}|${b.id}">Link them</button><button class="btn sm ghost" data-notsame-pair="${a.id}|${b.id}">Not the same</button></div>
+  </div>`).join('')}
   ${list.length===0? `<div class="empty"><div class="big">🎓</div>No students yet.</div>` : `
   <div class="list">
     ${list.map(s=>{
@@ -4240,7 +4324,7 @@ function renderStudents(){
       <div class="item" data-open="${s.id}">
         <div class="dot" style="background:${s.active===false?'var(--ink-faint)':typeColor(s.type)}"></div>
         <div class="body">
-          <div class="title">${escapeHTML(s.name)} ${s.isGroup?'<span class="badge muted">Group</span>':''} ${s.active===false?'<span class="badge muted">Inactive</span>':''}</div>
+          <div class="title">${escapeHTML(s.name)} ${s.isGroup?'<span class="badge muted">Group</span>':''} ${s.active===false?'<span class="badge muted">Inactive</span>':''} ${personSiblings(s).length?'<span class="badge muted" title="Same person as another record">🔗</span>':''}</div>
           <div class="meta">${typeLabel(s.type)}${s.isGroup?` · ${batchMembers(s.id).length} member${batchMembers(s.id).length===1?'':'s'}`:''} · Class ${escapeHTML(s.class||'—')} ${parentBatch?`· via ${escapeHTML(parentBatch.name)}`:''} ${!s.isGroup&&fee.expected>0?`· <span style="color:${fee.status==='Paid'||fee.status==='Advance'?'var(--ok)':fee.status==='Partial'?'var(--amber-soft)':'var(--err)'}">${fee.status}${feeMonthTag}</span>`:''}</div>
         </div>
         <div class="chev">›</div>
@@ -4257,6 +4341,17 @@ function bindStudents(){
   view.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{studentsFilter=el.dataset.filter; render();}));
   view.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.open})));
   document.getElementById('addStudentBtn').addEventListener('click',()=>openStudentForm());
+  view.querySelectorAll('[data-link-pair]').forEach(btn=>btn.addEventListener('click',()=>{
+    const [ia,ib] = btn.dataset.linkPair.split('|'); let a = studentById(ia), b = studentById(ib); if(!a||!b) return;
+    if(filledShared(b)>filledShared(a)) [a,b] = [b,a];                                       // the record with more details is the master
+    const diffs = sharedDiffs(a,b);
+    if(diffs.length && !confirm(`Both records have different values for: ${diffs.map(d=>d[1]).join(', ')}.\n\nThe details of "${a.name}" (${whichClassLabel(a)}) will be used for both. Continue?`)) return;
+    linkPeople(a,b); saveDB(); render(); toast('Linked — same person');
+  }));
+  view.querySelectorAll('[data-notsame-pair]').forEach(btn=>btn.addEventListener('click',()=>{
+    const [ia,ib] = btn.dataset.notsamePair.split('|'); const a = studentById(ia), b = studentById(ib); if(!a||!b) return;
+    a.notSameAs = (a.notSameAs||[]).concat(ib); b.notSameAs = (b.notSameAs||[]).concat(ia); saveDB(); render();
+  }));
 }
 
 /* =========================================================================
@@ -4283,6 +4378,7 @@ function renderStudentDetail(id, tab){
   else if(tab==='exams') body = studentExamsTab(s);
   else if(tab==='fees') body = studentFeesTab(s);
   else if(tab==='syllabus') body = studentSyllabusTab(s);
+  if(tab==='overview' && !isGroup) body = personPanelHTML(s) + body;
 
   const parentBatch = s.batchId ? studentById(s.batchId) : null;
 
@@ -4293,6 +4389,7 @@ function renderStudentDetail(id, tab){
       <h2 style="font-size:19px;">${escapeHTML(s.name)} ${isGroup?'<span class="badge muted">Group</span>':''}</h2>
       <div class="page-sub" style="margin:2px 0 0;">${typeLabel(s.type)} · Class ${escapeHTML(s.class||'—')}${s.school?' · '+escapeHTML(s.school):''}</div>
       ${parentBatch? `<div class="page-sub" style="margin:2px 0 0;cursor:pointer;color:var(--amber-soft);" data-open-student="${parentBatch.id}">Part of: ${escapeHTML(parentBatch.name)} ›</div>`:''}
+      ${personSiblings(s).map(o=>`<div class="page-sub" style="margin:2px 0 0;cursor:pointer;color:var(--amber-soft);" data-open-student="${o.id}">🔗 Also: ${escapeHTML(whichClassLabel(o))} ›</div>`).join('')}
     </div>
     <button class="icon-btn" id="editStudentBtn">✎</button>
   </div>
@@ -4837,170 +4934,215 @@ function bindFees(){
 /* =========================================================================
    REPORTS
    ========================================================================= */
-function renderReports(){
-  const month = todayISO().slice(0,7);
-  const classesTaken = DB.classRecords.filter(r=>r.date.startsWith(month)).length;
-  const examsThisMonth = examCountUnique(DB.exams.filter(e=>e.date.startsWith(month)));
+/* =========================================================================
+   REPORTS — three tabs, each answering one question:
+   This month  = what came in / what is still to come (income range, off days)
+   Time & money = how long each student takes vs what they pay
+   Students    = one row per PERSON: attendance and exam average
+   ========================================================================= */
+let reportsTab = 'month';              // 'month' | 'time' | 'students'
+let reportsStudentFilter = 'all';
+let reportsSearch = '';
+const TIME_WINDOW_DAYS = 30;
 
-  // Split by source. Madrasa-type students are pulled out FIRST, by type,
-  // regardless of group membership — a madrasa student can be part of a
-  // madrasa-class group (batchId set) and must never be counted as tutoring
-  // "batch" income just because they have a batchId.
-  // Everyone else (private-tutoring students, whether solo or taught inside
-  // a batch group) keeps the original batchId-based split: that's what
-  // "batch" vs "private" is actually meant to distinguish for tutoring —
-  // members of a batch group commonly keep type:'private' individually
-  // (see demo data), so type alone can't drive that half of the split.
+// Money for one month, split the same way the old Income Reference did (madrasa students pulled out first;
+// among tutoring students, belonging to a batch group = "batch", otherwise "private").
+function incomeBreakdown(month){
   let privateCollected=0, privateDue=0, batchCollected=0, batchDue=0, madrasaStuCollected=0, madrasaStuDue=0;
   feeTrackedStudents().filter(s=>s.monthlyFee>0 && !s.isGroup).forEach(s=>{
-    const f=feeStatusFor(s,month);
+    const f = feeStatusFor(s,month);
     if(s.type==='madrasa'){ madrasaStuCollected+=f.paid; madrasaStuDue+=f.due; }
     else if(s.batchId){ batchCollected+=f.paid; batchDue+=f.due; }
-    else{ privateCollected+=f.paid; privateDue+=f.due; }
+    else { privateCollected+=f.paid; privateDue+=f.due; }
   });
-  const collected = privateCollected + batchCollected + madrasaStuCollected;
-  const dueTotal = privateDue + batchDue + madrasaStuDue;
+  const salary = Number(DB.settings.monthlySalary)||0;
+  const collected = privateCollected + batchCollected + madrasaStuCollected, due = privateDue + batchDue + madrasaStuDue;
+  return {salary, privateCollected, privateDue, batchCollected, batchDue, madrasaStuCollected, madrasaStuDue, collected, due,
+    low: round2(salary + collected), high: round2(salary + collected + due)};
+}
 
-  const rate = perDayRate(month); // salary ÷ total calendar days — Friday off is still paid
-  const elapsed = daysElapsedInMonth(month);
+// Hours taught vs monthly fee, over the last 30 days. Time comes from the Session Log (every teaching block is
+// logged; the ones you tapped "early" on are measured, the rest are assumed on schedule).
+function timeMoneyData(){
+  const today = todayISO(), from = addDaysISO(today, -(TIME_WINDOW_DAYS-1));
+  const logs = (DB.sessionLogs||[]).filter(l=>l.date>=from && l.date<=today);
+  const byUnit = {}, unlinked = {mins:0, n:0};
+  let measured = 0;
+  logs.forEach(l=>{
+    const st = l.studentId ? studentById(l.studentId) : null, mins = sessionActualMinutes(l);
+    if(l.autoFilled!==true) measured++;
+    if(!st){ unlinked.mins += mins; unlinked.n++; return; }
+    if(st.type==='madrasa') return;                                  // madrasa time is covered by your salary
+    const u = byUnit[st.id] = byUnit[st.id] || {id:st.id, mins:0, n:0};
+    u.mins += mins; u.n++;
+  });
+  const rows = [];
+  DB.students.filter(st=>st.active!==false && st.type!=='madrasa' && (st.isGroup || !st.batchId)).forEach(st=>{
+    const u = byUnit[st.id] || {mins:0, n:0};
+    const members = st.isGroup ? batchMembers(st.id).filter(m=>m.active!==false && !m.isGroup) : [];
+    const fee = st.isGroup ? members.reduce((a,m)=>a+(Number(m.monthlyFee)||0),0) : (Number(st.monthlyFee)||0);
+    const hours = u.mins/60;
+    rows.push({id:st.id, name:st.name, isGroup:st.isGroup===true, members:members.length, sessions:u.n, mins:u.mins, hours,
+      avgMins: u.n ? u.mins/u.n : null, fee, perHour: hours>0 && fee>0 ? fee/hours : null,
+      alsoIn: st.isGroup ? [] : personSiblings(st).map(whichClassLabel)});
+  });
+  rows.sort((a,b)=> (a.perHour===null)-(b.perHour===null) || (a.perHour||0)-(b.perHour||0) || a.name.localeCompare(b.name));   // lowest ৳/hour first
+  const timed = rows.filter(r=>r.mins>0);                           // overall ৳/hour only counts students you actually taught in the period
+  const totalFee = timed.reduce((a,r)=>a+r.fee,0), totalMins = timed.reduce((a,r)=>a+r.mins,0);
+  return {from, to:today, rows, unlinked, sessions:logs.length, measured, totalFee, totalHours:totalMins/60, overallPerHour: totalMins>0 ? totalFee/(totalMins/60) : null};
+}
+
+// One row per PERSON (linked records merged); groups listed separately.
+function studentReportRows(){
+  const people = [], seen = new Set();
+  DB.students.filter(s=>!s.isGroup).forEach(s=>{
+    const key = s.personId || s.id; if(seen.has(key)) return; seen.add(key);
+    const recs = s.personId ? DB.students.filter(x=>x.personId===s.personId && !x.isGroup) : [s];
+    let P=0,A=0,L=0; const exams = [];
+    recs.forEach(r=>{ const a = attendanceStatsFor(r.id); P+=a.present; A+=a.absent; L+=a.late; const e = examAverage(r.id); if(e!==null) exams.push(e); });
+    const tot = P+A+L;
+    people.push({id:recs[0].id, name:s.name, type:s.type, active:recs.some(r=>r.active!==false), recs:recs.length,
+      classes:recs.map(whichClassLabel), pct: tot>0 ? Math.round(((P+L*0.5)/tot)*100) : null,
+      exam: exams.length ? Math.round(exams.reduce((a,b)=>a+b,0)/exams.length) : null});
+  });
+  people.sort((a,b)=>(b.active-a.active) || a.name.localeCompare(b.name));
+  return people;
+}
+
+function reportsMonthTab(month){
+  const classesTaken = DB.classRecords.filter(r=>r.date.startsWith(month)).length;
+  const examsThisMonth = examCountUnique(DB.exams.filter(e=>e.date.startsWith(month)));
+  const inc = incomeBreakdown(month);
+  const rate = perDayRate(month), elapsed = daysElapsedInMonth(month);
   const accruedSoFar = rate!==null ? rate*elapsed : null;
-  const privatePerDaySoFar = elapsed>0 ? privateCollected/elapsed : null;
-  const batchPerDaySoFar = elapsed>0 ? batchCollected/elapsed : null;
-  const personalOffsThisMonth = (DB.offDays||[]).filter(o=>o.date.startsWith(month)).sort((a,b)=>a.date.localeCompare(b.date));
+  const personalOffs = (DB.offDays||[]).filter(o=>o.date.startsWith(month)).sort((a,b)=>a.date.localeCompare(b.date));
   const weeklyOffs = weeklyOffCountInMonth(month);
-
+  const row = (a,b,strong)=>`<div class="two-col-item"><span>${a}</span><b${strong?' style="color:var(--amber-soft);"':''}>${b}</b></div>`;
+  const teachingRows = [
+    ['Private', inc.privateCollected, inc.privateDue], ['Batch / groups', inc.batchCollected, inc.batchDue],
+    ...((inc.madrasaStuCollected>0||inc.madrasaStuDue>0) ? [['Madrasa students\' fees', inc.madrasaStuCollected, inc.madrasaStuDue]] : [])];
   return `
   <div class="card">
-    <div class="card-title">Monthly Teaching Report — ${monthLabel(month)}</div>
-    <div class="two-col-item"><span>Classes recorded</span><b>${classesTaken}</b></div>
-    <div class="two-col-item"><span>Active students</span><b>${individualStudents().length}</b></div>
-    <div class="two-col-item"><span>Exams held</span><b>${examsThisMonth}</b></div>
+    <div class="card-title">${monthLabel(month)} at a glance</div>
+    ${row('Classes recorded', classesTaken)}${row('Active students', uniquePeople(individualStudents()))}${row('Exams held', examsThisMonth)}
   </div>
 
-  ${(DB.settings.monthlySalary>0 || collected>0) ? `
-  <div class="card">
-    <div class="card-title">Income Reference — ${monthLabel(month)}</div>
-    <div class="hint" style="margin-bottom:12px;">Three separate income sources, shown separately since they work differently. Reference only — nothing here is ever deducted automatically.</div>
-
-    ${DB.settings.monthlySalary>0 ? `
-    <div class="sub-heading" style="margin-top:0;">Madrasa Salary (fixed monthly)</div>
-    <div class="two-col-item"><span>Monthly salary</span><b>${fmtMoney(DB.settings.monthlySalary)}</b></div>
-    ${rate!==null? `<div class="two-col-item"><span>Per-day rate (salary ÷ ${daysInMonth(month)} days)</span><b>${fmtMoney(rate)}</b></div>` : ''}
-    ${accruedSoFar!==null? `<div class="two-col-item"><span>Accrued so far (${elapsed} days elapsed)</span><b>${fmtMoney(accruedSoFar)}</b></div>` : ''}
-    <div class="page-sub" style="margin-top:4px;">Weekly off (${DB.settings.weeklyOffDay||'—'}) is paid as normal — ${weeklyOffs} day${weeklyOffs===1?'':'s'} this month, not subtracted from the rate.</div>
-    ` : `
-    <div class="sub-heading" style="margin-top:0;">Madrasa Salary</div>
-    <div class="page-sub">Set your monthly salary in Settings to see this.</div>
-    `}
-    ${(madrasaStuCollected>0 || madrasaStuDue>0) ? `
-    <div class="two-col-item" style="margin-top:6px;"><span>+ Madrasa student fees collected</span><b>${fmtMoney(madrasaStuCollected)}</b></div>
-    <div class="two-col-item"><span>+ Madrasa student fees due</span><b>${fmtMoney(madrasaStuDue)}</b></div>
-    <div class="page-sub" style="margin-top:2px;">Separate from your fixed salary above — not added into it.</div>
-    ` : ''}
-
+  <div class="card" data-income-card>
+    <div class="card-title">Income — ${monthLabel(month)}</div>
+    <div class="sub-heading" style="margin-top:0;">Without extra effort — fixed</div>
+    ${inc.salary>0 ? `
+      ${row('Madrasa salary', fmtMoney(inc.salary))}
+      ${rate!==null ? `<div class="page-sub" style="margin:2px 0 0;">${fmtMoney(rate)} a day (salary ÷ ${daysInMonth(month)} days)${accruedSoFar!==null?` · ${fmtMoney(accruedSoFar)} earned so far`:''}. Weekly off (${DB.settings.weeklyOffDay||'—'}) is paid — ${weeklyOffs} day${weeklyOffs===1?'':'s'} this month.</div>` : ''}
+    ` : `<div class="page-sub">Set your monthly salary in Settings to see it here.</div>`}
+    <div class="sub-heading">From teaching — depends on effort</div>
+    <div class="row" style="font-size:12px;color:var(--ink-faint);"><span></span><span style="display:flex;gap:18px;"><span>Collected</span><span>Still due</span></span></div>
+    ${teachingRows.map(([n,c,d])=>`<div class="two-col-item"><span>${n}</span><span style="display:flex;gap:18px;"><b>${fmtMoney(c)}</b><b style="${d>0?'color:var(--err);':''}">${fmtMoney(d)}</b></span></div>`).join('')}
+    ${row('Teaching total', `${fmtMoney(inc.collected)} · ${fmtMoney(inc.due)} due`)}
     <div class="divider"></div>
+    <div class="sub-heading" style="margin-top:0;">Your income range this month</div>
+    ${row('Low — salary + what is already collected', fmtMoney(inc.low))}
+    ${row('High — if everyone who owes pays', fmtMoney(inc.high), true)}
+    ${inc.salary>0 && inc.high>0 ? `<div class="page-sub" style="margin:4px 0 0;">The fixed salary covers ${Math.round(inc.salary/inc.high*100)}% of the high end. Reference only — nothing here is deducted automatically.</div>` : ''}
+  </div>
 
-    <div class="sub-heading">Private Tutoring Income</div>
-    <div class="two-col-item"><span>Collected this month</span><b>${fmtMoney(privateCollected)}</b></div>
-    <div class="two-col-item"><span>Still due this month</span><b>${fmtMoney(privateDue)}</b></div>
-    ${privatePerDaySoFar!==null? `<div class="two-col-item"><span>Average per day so far</span><b>${fmtMoney(privatePerDaySoFar)}</b></div>` : ''}
+  <div class="card" data-offdays-card>
+    <div class="card-title">Personal off days — ${monthLabel(month)}</div>
+    ${personalOffs.length ? personalOffs.map(o=>`
+      <div class="two-col-item"><span>${o.date} · ${offScopeLabel(o)}${o.reason?' · '+escapeHTML(o.reason):''}</span>
+      <span class="badge ${o.makeupNeeded?(o.makeupDone?'ok':'warn'):'muted'}">${o.makeupNeeded?(o.makeupDone?'Made up':'Makeup owed'):'No makeup needed'}</span></div>`).join('')
+      : `<div class="page-sub">No off days marked this month.</div>`}
+    ${(rate!==null && personalOffs.length) ? `<div class="page-sub" style="margin-top:8px;">What-if: if these became unpaid leave, roughly ${fmtMoney(rate*personalOffs.length)} at the daily rate — hypothetical only, never applied.</div>` : ''}
+  </div>`;
+}
 
-    <div class="divider"></div>
-
-    <div class="sub-heading">Batch / Group Income</div>
-    <div class="two-col-item"><span>Collected this month</span><b>${fmtMoney(batchCollected)}</b></div>
-    <div class="two-col-item"><span>Still due this month</span><b>${fmtMoney(batchDue)}</b></div>
-    ${batchPerDaySoFar!==null? `<div class="two-col-item"><span>Average per day so far</span><b>${fmtMoney(batchPerDaySoFar)}</b></div>` : ''}
-
-    ${personalOffsThisMonth.length? `
-      <div class="divider"></div>
-      <div style="font-size:12px;color:var(--ink-faint);font-weight:700;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Personal off days this month (${personalOffsThisMonth.length})</div>
-      ${personalOffsThisMonth.map(o=>`
-        <div class="two-col-item">
-          <span>${o.date} · ${offScopeLabel(o)}${o.reason?' · '+escapeHTML(o.reason):''}</span>
-          <span class="badge ${o.makeupNeeded?(o.makeupDone?'ok':'warn'):'muted'}">${o.makeupNeeded?(o.makeupDone?'Made up':'Makeup owed'):'No makeup needed'}</span>
+function reportsTimeTab(){
+  const d = timeMoneyData();
+  const logs = DB.sessionLogs||[];
+  const fmtH = h=>h>=10 ? Math.round(h)+' h' : (Math.round(h*10)/10)+' h';
+  return `
+  <div class="card" data-time-card>
+    <div class="card-title">Time vs money — last ${TIME_WINDOW_DAYS} days</div>
+    <div class="hint" style="margin-bottom:10px;">Monthly fee ÷ hours you taught. The lowest ৳ per hour is listed first — those are the ones to shorten, reprice, or drop. ${d.sessions>0?`${d.measured} of ${d.sessions} sessions were measured with "Started early / Ended early"; the rest are assumed to have run on schedule.`:'No sessions logged in this period yet.'}</div>
+    ${d.rows.length===0 ? `<div class="page-sub">No private students or batches yet.</div>` : d.rows.map(r=>`
+      <div class="item" data-open-student="${r.id}" style="cursor:pointer;">
+        <div class="body">
+          <div class="title">${escapeHTML(r.name)} ${r.isGroup?`<span class="badge muted">Batch · ${r.members} member${r.members===1?'':'s'}</span>`:''}${r.alsoIn.length?` <span class="badge muted">🔗 also ${escapeHTML(r.alsoIn.join(', '))}</span>`:''}</div>
+          <div class="meta">${r.sessions} session${r.sessions===1?'':'s'} · ${fmtH(r.hours)}${r.avgMins!==null?` · avg ${formatDuration(r.avgMins)} each`:''} · fee ${fmtMoney(r.fee)}${r.isGroup?' (all members)':''}</div>
         </div>
-      `).join('')}
-      ${rate!==null? `<div class="page-sub" style="margin-top:8px;">If any of these became unpaid leave, roughly ${fmtMoney(rate*personalOffsThisMonth.length)} at the reference rate — hypothetical only, not an actual deduction.</div>` : ''}
-    ` : ''}
+        <div style="text-align:right;font-weight:700;white-space:nowrap;">${r.perHour!==null?fmtMoney(Math.round(r.perHour))+'<span class="hint" style="display:inline;"> /h</span>':'<span class="hint">—</span>'}</div>
+      </div>`).join('')}
+    ${d.overallPerHour!==null ? `<div class="divider"></div><div class="two-col-item"><span>Overall — all private + batches</span><b>${fmtMoney(Math.round(d.overallPerHour))} /h</b></div><div class="page-sub" style="margin:2px 0 0;">${fmtMoney(d.totalFee)} a month for about ${fmtH(d.totalHours)} taught in ${TIME_WINDOW_DAYS} days.</div>` : ''}
+    ${d.unlinked.n>0 ? `<div class="page-sub" style="margin-top:8px;color:var(--amber-soft);">${d.unlinked.n} session${d.unlinked.n===1?'':'s'} (${fmtH(d.unlinked.mins/60)}) belong to schedule blocks that aren't linked to a student, so they aren't counted above. Link them in the Schedule.</div>` : ''}
   </div>
-  ` : `
-  <div class="card">
-    <div class="card-title">Income Reference</div>
-    <div class="page-sub">Set your monthly salary in Settings to see a per-day rate here.</div>
-  </div>
-  `}
 
-  ${(DB.sessionLogs&&DB.sessionLogs.length) ? `
+  ${logs.length ? `
   <div class="card">
-    <div class="card-title">Session Log — actual time taught</div>
-    <div class="hint" style="margin-bottom:10px;">Logged whenever you tapped "Starting early" or "Ended early" on Today's timeline. Scheduled time is untouched — this is just a record of what actually happened.</div>
+    <div class="card-title">Session log — all time</div>
     ${(()=>{
-      const logs = DB.sessionLogs;
-      const scheduledMins = logs.map(l=>toMinutes(parseHHMM(l.scheduledEnd))-toMinutes(parseHHMM(l.scheduledStart)));
-      const actualMins = logs.map(sessionActualMinutes);
-      const savedMins = logs.map((l,i)=> scheduledMins[i]-actualMins[i]);
-      const avgActual = actualMins.reduce((a,b)=>a+b,0)/logs.length;
-      const avgSaved = savedMins.reduce((a,b)=>a+b,0)/logs.length;
-      return `
-      <div class="grid3" style="margin-bottom:12px;">
+      const sched = logs.map(l=>toMinutes(parseHHMM(l.scheduledEnd))-toMinutes(parseHHMM(l.scheduledStart))), act = logs.map(sessionActualMinutes);
+      const avgActual = act.reduce((a,b)=>a+b,0)/logs.length, avgSaved = act.reduce((a,b,i)=>a+(sched[i]-b),0)/logs.length;
+      return `<div class="grid3" style="margin-bottom:6px;">
         <div class="stat"><div class="num">${logs.length}</div><div class="lbl">Sessions logged</div></div>
         <div class="stat"><div class="num">${formatDuration(avgActual)}</div><div class="lbl">Avg. time taught</div></div>
-        <div class="stat"><div class="num">${formatDuration(Math.max(0,avgSaved))}</div><div class="lbl">Avg. deviation from schedule</div></div>
-      </div>`;
+        <div class="stat"><div class="num">${formatDuration(Math.max(0,avgSaved))}</div><div class="lbl">Avg. under schedule</div></div></div>`;
     })()}
-    <div class="sub-heading" style="margin-top:14px;">By Student</div>
-    ${(()=>{
-      const byStudent = {};
-      DB.sessionLogs.forEach(l=>{
-        const key = l.studentId || '__unlinked__';
-        if(!byStudent[key]) byStudent[key] = [];
-        byStudent[key].push(l);
-      });
-      return Object.entries(byStudent).map(([sid, logs])=>{
-        const st = sid!=='__unlinked__' ? studentById(sid) : null;
-        const mins = logs.map(sessionActualMinutes);
-        const total = mins.reduce((a,b)=>a+b,0);
-        const avg = total/logs.length;
-        return `<div class="two-col-item">
-          <span>${st?escapeHTML(st.name):'(unlinked block)'} · ${logs.length} session${logs.length===1?'':'s'}</span>
-          <span class="page-sub" style="margin:0;">${formatDuration(total)} total · avg ${formatDuration(avg)}</span>
-        </div>`;
-      }).join('');
-    })()}
+    <details style="margin-top:8px;"><summary class="hint" style="cursor:pointer;">Show every session (${logs.length})</summary>
+      <div class="list" style="margin-top:8px;">
+      ${logs.slice().sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt)).map(l=>{
+        const sm = toMinutes(parseHHMM(l.scheduledEnd))-toMinutes(parseHHMM(l.scheduledStart)), am = sessionActualMinutes(l), saved = sm-am;
+        const tag = l.autoFilled===true ? 'assumed' : [l.actualStart?'started early':null, l.actualEnd?'ended early':null].filter(Boolean).join(', ');
+        return `<div class="two-col-item"><span>${l.date} · ${escapeHTML(l.title)}${tag?` (${tag})`:''}</span><span class="page-sub" style="margin:0;">${formatDuration(am)}${saved>0?` (${formatDuration(saved)} saved)`:''}</span></div>`;
+      }).join('')}
+      </div>
+    </details>
+  </div>` : ''}`;
+}
 
-    <div class="sub-heading">Full Log (${DB.sessionLogs.length})</div>
-    <div class="list">
-    ${DB.sessionLogs.slice().sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt)).map(l=>{
-      const scheduledMin = toMinutes(parseHHMM(l.scheduledEnd)) - toMinutes(parseHHMM(l.scheduledStart));
-      const actualMin = sessionActualMinutes(l);
-      const savedMin = scheduledMin - actualMin;
-      const tag = [l.actualStart?'started early':null, l.actualEnd?'ended early':null].filter(Boolean).join(', ');
-      return `<div class="two-col-item">
-        <span>${l.date} · ${escapeHTML(l.title)}${tag?` (${tag})`:''}</span>
-        <span class="page-sub" style="margin:0;">${formatDuration(actualMin)} taught${savedMin>0?` (${formatDuration(savedMin)} saved)`:''}</span>
-      </div>`;
-    }).join('')}
-    </div>
-  </div>
-  ` : ''}
+function studentReportRowHTML(p){
+  return `<div class="item" data-open-student="${p.id}" data-rname="${escapeHTML(normName(p.name))}" data-rtype="${p.type}" style="${p.active?'':'opacity:.6;'}">
+    <div class="dot" style="background:${typeColor(p.type)}"></div>
+    <div class="body"><div class="title">${escapeHTML(p.name)}${p.recs>1?` <span class="badge muted">🔗 ${escapeHTML(p.classes.join(' + '))}</span>`:''}${p.active?'':' <span class="badge muted">Inactive</span>'}</div>
+      <div class="meta">Attendance ${p.pct!==null?p.pct+'%':'—'} · Exam avg ${p.exam!==null?p.exam+'%':'—'}</div></div>
+    <div class="chev">›</div></div>`;
+}
+function reportsStudentsTab(){
+  const filters = [['all','All'],['private','Private'],['batch','Batch'],['madrasa','Madrasa']];
+  const people = studentReportRows();
+  const groups = DB.students.filter(s=>s.isGroup && s.active!==false);
+  return `
+  <div class="field" style="margin-bottom:8px;"><input id="rSearch" type="text" placeholder="Search a student" autocomplete="off" value="${escapeHTML(reportsSearch)}"></div>
+  <div class="tabs" style="margin-bottom:10px;">${filters.map(([id,l])=>`<div class="tab ${reportsStudentFilter===id?'active':''}" data-rfilter="${id}">${l}</div>`).join('')}</div>
+  <div class="list" id="rList">${people.length ? people.map(studentReportRowHTML).join('') : `<div class="empty">No students yet.</div>`}</div>
+  <div class="empty" id="rNone" style="display:none;padding:14px;">No student matches.</div>
+  ${groups.length ? `<div class="sub-heading">Groups</div><div class="list">${groups.map(g=>{ const a = attendanceStatsFor(g.id);
+    return `<div class="item" data-open-student="${g.id}"><div class="dot" style="background:${typeColor(g.type)}"></div><div class="body"><div class="title">${escapeHTML(g.name)} <span class="badge muted">${batchMembers(g.id).length} member${batchMembers(g.id).length===1?'':'s'}</span></div><div class="meta">Group attendance ${a.pct!==null?a.pct+'%':'—'}</div></div><div class="chev">›</div></div>`; }).join('')}</div>` : ''}`;
+}
 
-  <div class="sub-heading">Student Reports</div>
-  <div class="list">
-  ${DB.students.map(s=>{
-    const att = attendanceStatsFor(s.id);
-    const avg = examAverage(s.id);
-    return `<div class="item" data-open-student="${s.id}">
-      <div class="dot" style="background:${typeColor(s.type)}"></div>
-      <div class="body"><div class="title">${escapeHTML(s.name)}</div><div class="meta">Attendance ${att.pct!==null?att.pct+'%':'—'} · Exam avg ${avg!==null?avg+'%':'—'}</div></div>
-      <div class="chev">›</div>
-    </div>`;
-  }).join('')}
-  </div>
-  `;
+function renderReports(){
+  const month = todayISO().slice(0,7);
+  const tabs = [['month','This month'],['time','Time & money'],['students','Students']];
+  const body = reportsTab==='time' ? reportsTimeTab() : reportsTab==='students' ? reportsStudentsTab() : reportsMonthTab(month);
+  return `
+  <div class="tabs">${tabs.map(([id,l])=>`<div class="tab ${reportsTab===id?'active':''}" data-rtab="${id}">${l}</div>`).join('')}</div>
+  ${body}`;
+}
+function applyReportsFilter(){
+  const list = document.getElementById('rList'); if(!list) return;
+  const q = normName(reportsSearch); let shown = 0;
+  list.querySelectorAll('.item').forEach(it=>{
+    const okType = reportsStudentFilter==='all' || it.dataset.rtype===reportsStudentFilter;
+    const okName = !q || (it.dataset.rname||'').includes(q);
+    it.style.display = okType && okName ? '' : 'none'; if(okType && okName) shown++;
+  });
+  const none = document.getElementById('rNone'); if(none) none.style.display = shown===0 && list.querySelectorAll('.item').length>0 ? '' : 'none';
 }
 function bindReports(){
-  document.getElementById('view').querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent})));
+  const view = document.getElementById('view');
+  view.querySelectorAll('[data-rtab]').forEach(el=>el.addEventListener('click',()=>{ reportsTab = el.dataset.rtab; render(); window.scrollTo(0,0); }));
+  view.querySelectorAll('[data-rfilter]').forEach(el=>el.addEventListener('click',()=>{ reportsStudentFilter = el.dataset.rfilter; render(); }));
+  const search = view.querySelector('#rSearch'); if(search) search.addEventListener('input',()=>{ reportsSearch = search.value; applyReportsFilter(); });
+  applyReportsFilter();
+  view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent})));
 }
 
 /* =========================================================================
@@ -5280,6 +5422,16 @@ function openStudentForm(id, presetBatchId){
         <div class="hint">Class records taught to the whole group will show up automatically for this student too — their own fee, attendance, and progress still stay separate.</div>
       </div>`;
     })()}
+    ${(()=>{
+      const others = DB.students.filter(x=>!x.isGroup && (!s || x.id!==s.id));
+      if(!others.length) return '';
+      const mine = s ? normName(s.name) : '', cur = s ? (personSiblings(s)[0]||{}).id : '';
+      others.sort((a,b)=> (normName(b.name)===mine) - (normName(a.name)===mine) || a.name.localeCompare(b.name));
+      return `<div class="field"><label>Same person as… (optional)</label>
+        <select id="f_sameAs"><option value="">— not linked —</option>${others.map(x=>`<option value="${x.id}" ${x.id===cur?'selected':''}>${escapeHTML(x.name)} · ${escapeHTML(whichClassLabel(x))}</option>`).join('')}</select>
+        <div class="hint">If this student also studies in another class (say in a batch and privately), link the two records. Class, school and guardian then stay the same on both; fees and attendance stay separate.</div>
+      </div>`;
+    })()}
     ${DB.students.length? `
     <div class="field"><label>Copy subjects from another student (optional)</label>
       <select id="f_copyFrom">
@@ -5359,6 +5511,7 @@ function openStudentForm(id, presetBatchId){
         joiningDate: root.querySelector('#f_joiningDate').value || todayISO(),
         notes: root.querySelector('#f_notes').value.trim()
       };
+      let rec = s;
       if(s){
         const wasActive = s.active!==false;
         Object.assign(s, data);
@@ -5377,14 +5530,29 @@ function openStudentForm(id, presetBatchId){
           if(openPeriod) openPeriod.to = todayISO();
         }
       }else{
-        DB.students.push(Object.assign({id:uid('stu'), active:true, pausedPeriods:[], createdAt:new Date().toISOString()}, data));
+        rec = Object.assign({id:uid('stu'), active:true, pausedPeriods:[], createdAt:new Date().toISOString()}, data);
+        DB.students.push(rec);
       }
+      const sameSel = root.querySelector('#f_sameAs');
+      if(rec.isGroup){ unlinkPerson(rec); }
+      else if(sameSel){
+        const want = sameSel.value || '', have = personSiblings(rec).map(x=>x.id);
+        if(!want){ if(have.length) unlinkPerson(rec); }
+        else if(have.includes(want)){ syncSharedFields(rec); }
+        else {
+          const other = studentById(want);
+          if(other){
+            const diffs = sharedDiffs(rec, other);
+            if(!diffs.length || confirm(`"${other.name}" (${whichClassLabel(other)}) has different values for: ${diffs.map(d=>d[1]).join(', ')}.\n\nThis record's details will be used for both. Continue?`)) linkPeople(rec, other);
+          }
+        }
+      } else if(rec.personId){ syncSharedFields(rec); }
       saveDB(); closeModal(); render(); toast('Saved');
     });
     const del = root.querySelector('#delStudentBtn');
     if(del) del.addEventListener('click',()=>{
       if(confirm(`Delete ${s.name}? This does not delete their class records, but they will be orphaned.`)){
-        DB.students = DB.students.filter(x=>x.id!==s.id); saveDB(); closeModal(); navigate('students'); toast('Student deleted');
+        unlinkPerson(s); DB.students = DB.students.filter(x=>x.id!==s.id); saveDB(); closeModal(); navigate('students'); toast('Student deleted');
       }
     });
   }});

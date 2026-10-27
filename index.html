@@ -311,6 +311,14 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 .keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;max-width:360px;}
 .keypad .btn{padding:14px 0;font-size:17px;}
 .calc-out{font-family:'Fraunces',serif;font-size:26px;min-height:36px;margin:4px 0 0;color:var(--amber-soft);word-break:break-all;}
+.bp-row{display:grid;grid-template-columns:minmax(0,1fr) 52px 78px 26px;gap:6px;align-items:center;margin-bottom:2px;}
+.bp-row.inc{grid-template-columns:minmax(0,1fr) 104px 26px;}
+.bp-row input,.bp-head input{width:100%;min-width:0;padding:9px 8px;}
+.bp-x{background:none;border:0;color:var(--ink-faint);font-size:16px;cursor:pointer;padding:4px;line-height:1;}
+.bp-sub{font-size:11px;color:var(--ink-faint);margin:0 0 8px 2px;min-height:14px;}
+.bp-head{display:grid;grid-template-columns:minmax(0,1fr) auto 26px;gap:8px;align-items:center;margin-bottom:8px;}
+.bp-line{display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:14px;}
+.bp-line b{font-weight:700;}
 @media (max-width:899px){
   .navbtn{min-width:0;font-size:9px;letter-spacing:0;padding:6px 0;}
 }
@@ -367,7 +375,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-25.3-reports';
+const APP_BUILD = '2026-10-26.1-planner';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -437,6 +445,7 @@ function defaultDB(){
     loans:[],         // {id,person,direction:'lent'|'borrowed',amount,date,dueDate,note,repayments:[{id,date,amount}],createdAt}
     savingPots:[],    // {id,name,createdAt} — savings kept apart from cash
     savingTx:[],      // {id,potId,date,amount,type:'in'|'out',opening?,note,createdAt}
+    budgetPlans:[],   // Money › Plan — standalone planner, see BUDGET PLANNER block (touches nothing else)
     notes:[],         // {id,date,subject,category,done,createdAt} — general-purpose dated notes, e.g. lending/borrowing records, reminders
     syllabus:[],      // {id,studentId,subject,chapter,topic,status}
     studyPlan:[],
@@ -481,7 +490,7 @@ function defaultScheduleBlocks(){
    - Nothing is applied while a modal/form is open; it waits.
    ========================================================================= */
 const SYNC_STATE_KEY='tp_sync_state_v1', SYNC_PRE_KEY='tp_sync_pre_v1', SYNC_CONFLICT_KEY='tp_sync_conflicts_v1', SYNC_INIT_KEY='tp_sync_init_v1', SYNC_DEV_KEY='tp_sync_dev_v1';
-const SYNC_COLLS=['students','classRecords','homework','attendance','exams','batchExams','fees','tasks','expenses','incomes','loans','savingPots','savingTx','notes','syllabus','studyPlan','offDays','sessionLogs','schedule','subjects'];
+const SYNC_COLLS=['students','classRecords','homework','attendance','exams','batchExams','fees','tasks','expenses','incomes','loans','savingPots','savingTx','notes','syllabus','studyPlan','offDays','sessionLogs','schedule','subjects','budgetPlans'];
 const SYNC_NATURAL={attendance:1,fees:1,offDays:1,sessionLogs:1,schedule:1}; // same logical record can be created on two devices with different ids
 const SYNC_LOCAL_SETTINGS=['sheetsWebAppUrl','sheetsAutoBackup','lastSheetsBackupAt','lastManualBackupAt','backupPin','theme','onboarded','syncOn','syncToken'];
 const SyncUI={state:'idle',msg:'',attempted:false};
@@ -792,6 +801,7 @@ function mergeIntoDefaults(parsed){
   if(!Array.isArray(merged.expenses)) merged.expenses = []; // backups from before the Money section
   if(!Array.isArray(merged.batchExams)) merged.batchExams = []; // backups from before batch exams
   ['incomes','loans','savingPots','savingTx'].forEach(k=>{ if(!Array.isArray(merged[k])) merged[k] = []; }); // backups from before Money v2
+  if(!Array.isArray(merged.budgetPlans)) merged.budgetPlans = []; // backups from before the Budget Planner
   if(!merged.settings.moneyCarry || typeof merged.settings.moneyCarry!=='object' || Array.isArray(merged.settings.moneyCarry)) merged.settings.moneyCarry = {};
   // One-time migration for very old data only: auto-link "Safa" if the Maghrib-student setting
   // was NEVER stored. If the key exists (even as null = "— none —"), the user chose that: never relink.
@@ -1342,7 +1352,7 @@ function catPersist(kind, list){
   }
   saveDB();
 }
-let moneyTab = 'log';                 // 'log' | 'month' | 'calc'
+let moneyTab = 'log';                 // 'log' | 'month' | 'dhar' | 'savings' | 'calc' | 'plan'
 let moneyKind = 'personal';           // type chosen in the quick-add form
 let moneyLastCat = {personal:null, business:null, farm:null};
 let moneyMonth = null;                // Month tab override, 'YYYY-MM'
@@ -1614,6 +1624,196 @@ function openBudgetModal(){
     });
   }});
 }
+
+/* =========================================================================
+   BUDGET PLANNER (Money › Plan). STANDALONE: reads and writes ONLY DB.budgetPlans.
+   Nothing here reads expenses / incomes / fees / budgets / savings, and nothing here
+   feeds Money, Month, Reports or budgets. It just rides on the normal save, backup and sync.
+   DB.budgetPlans = [{id,name,days,cushion,income:[{id,name,amount}],
+     sections:[{id,name,fixed,lines:[{id,name,qty,price}]}],createdAt,updatedAt}]
+   days / cushion / amount / qty / price keep the TEXT you typed (so "1200/4" stays editable).
+   ========================================================================= */
+let bpId = null, bpFocus = null, bpSaveTimer = null;
+const BP_STARTERS = ['Food','Transport','Mobile & internet','Family','Education','Health','Saving','Other'];
+function bpPlans(){ if(!Array.isArray(DB.budgetPlans)) DB.budgetPlans = []; return DB.budgetPlans; }
+function bpActive(){ const a = bpPlans(); return a.find(p=>p.id===bpId) || a[0] || null; }
+function bpNum(src, dflt, label, bad){
+  const t = String(src==null?'':src).trim();
+  if(!t) return dflt;
+  const r = safeCalc(t);
+  if(!r.ok || !isFinite(r.value) || r.value<0){ bad.push(label); return 0; }
+  return r.value;
+}
+function bpCalc(p){
+  const bad = [];
+  let income = 0;
+  (p.income||[]).forEach(i=>{ income += bpNum(i.amount, 0, i.name||'Income', bad); });
+  const cushPct = Math.min(100, bpNum(p.cushion, 0, 'Cushion %', bad));
+  const days = Math.max(1, Math.round(bpNum(p.days, 30, 'Days', bad)) || 1);
+  let base = 0, planned = 0;
+  const sections = (p.sections||[]).map(sec=>{
+    const lines = (sec.lines||[]).map(l=>{
+      const nm = l.name||'Line';
+      const q = bpNum(l.qty, 1, nm+' qty', bad), pr = bpNum(l.price, 0, nm+' price', bad);
+      return {id:l.id, total:round2(q*pr)};
+    });
+    const sb = round2(lines.reduce((a,l)=>a+l.total,0));
+    const st = sec.fixed ? sb : round2(sb*(1+cushPct/100));
+    base += sb; planned += st;
+    return {id:sec.id, name:sec.name, fixed:!!sec.fixed, base:sb, total:st, lines};
+  });
+  base = round2(base); planned = round2(planned); income = round2(income);
+  sections.forEach(x=>{ x.pct = income>0 ? Math.round(x.total/income*100) : null; });
+  const left = round2(income-planned), leftNo = round2(income-base);
+  return {income, base, planned, cushion:round2(planned-base), cushPct, days, left,
+    perDay: left>0 ? Math.round(left/days) : 0, perDayNoCushion: leftNo>0 ? Math.round(leftNo/days) : 0, sections, bad};
+}
+function bpResultHTML(c){
+  const over = c.left<0;
+  return `
+    <div class="card-title">Result</div>
+    ${c.bad.length ? `<div class="hint" style="color:var(--err);margin-bottom:8px;">⚠ Couldn't read: ${escapeHTML(c.bad.slice(0,4).join(', '))}${c.bad.length>4?' …':''} — counted as 0. Use numbers or math like 1200/4 (no minus).</div>` : ''}
+    <div class="bp-line"><span>Income</span><b>${fmtMoney(c.income)}</b></div>
+    <div class="bp-line"><span>Planned spending${c.cushion>0?` <span class="hint">(incl. ${fmtMoney(c.cushion)} cushion)</span>`:''}</span><b>${fmtMoney(c.planned)}</b></div>
+    <div class="bp-line" style="border-top:1px solid var(--line);margin-top:4px;padding-top:9px;"><span>${over?'Over by':'Left'}</span><b class="${over?'':'pos'}" ${over?'style="color:var(--err)"':''}>${fmtMoney(Math.abs(c.left))}</b></div>
+    ${over ? '' : `<div class="bp-line"><span>Per day <span class="hint">(over ${c.days} days)</span></span><b>${fmtMoney(c.perDay)}</b></div>`}
+    ${(!over && c.cushion>0) ? `<div class="hint">Without the cushion: ${fmtMoney(c.perDayNoCushion)}/day</div>` : ''}
+    ${c.sections.filter(x=>x.total>0).length ? `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px;">${c.sections.filter(x=>x.total>0).map(x=>`<div class="bp-line" style="padding:3px 0;font-size:13px;"><span>${escapeHTML(x.name||'(unnamed)')}</span><span>${fmtMoney(x.total)}${x.pct!=null?` · ${x.pct}%`:''}</span></div>`).join('')}</div>` : ''}`;
+}
+function moneyPlannerHTML(){
+  const plans = bpPlans(), p = bpActive();
+  if(!p) return `<div class="card">
+    <div class="card-title">🧮 Budget planner</div>
+    <div class="hint" style="margin-bottom:12px;">Plan a month before you spend it. Everything here is typed by you — it never reads or changes your real money records.</div>
+    <button class="btn primary" id="bpNew">＋ New plan</button></div>`;
+  const c = bpCalc(p);
+  const secHTML = (p.sections||[]).map(sec=>{
+    const cs = c.sections.find(x=>x.id===sec.id)||{total:0,base:0,lines:[]};
+    return `<div class="card" data-bp-secbox="${escapeHTML(sec.id)}">
+      <div class="bp-head">
+        <input data-bp="secname" data-sec="${escapeHTML(sec.id)}" maxlength="40" placeholder="Section (e.g. Food)" value="${escapeHTML(sec.name||'')}">
+        <b data-sec-total="${escapeHTML(sec.id)}" style="white-space:nowrap;">${fmtMoney(cs.total)}</b>
+        <button class="bp-x" data-bp-del="sec" data-sec="${escapeHTML(sec.id)}" aria-label="Delete section">✕</button>
+      </div>
+      ${(sec.lines||[]).map(l=>{ const cl = (cs.lines||[]).find(x=>x.id===l.id); return `<div class="bp-row">
+        <input data-bp="line" data-f="name" data-sec="${escapeHTML(sec.id)}" data-id="${escapeHTML(l.id)}" data-focus="${escapeHTML(l.id)}" maxlength="40" placeholder="Item" value="${escapeHTML(l.name||'')}">
+        <input data-bp="line" data-f="qty" data-sec="${escapeHTML(sec.id)}" data-id="${escapeHTML(l.id)}" type="text" inputmode="decimal" autocomplete="off" placeholder="qty" value="${escapeHTML(l.qty||'')}">
+        <input data-bp="line" data-f="price" data-sec="${escapeHTML(sec.id)}" data-id="${escapeHTML(l.id)}" type="text" inputmode="decimal" autocomplete="off" placeholder="price ৳" value="${escapeHTML(l.price||'')}">
+        <button class="bp-x" data-bp-del="line" data-sec="${escapeHTML(sec.id)}" data-id="${escapeHTML(l.id)}" aria-label="Delete line">✕</button>
+      </div><div class="bp-sub" data-line-total="${escapeHTML(l.id)}">${cl && cl.total>0 ? '= '+fmtMoney(cl.total) : ''}</div>`; }).join('')}
+      <div class="row" style="margin-top:6px;">
+        <button class="btn sm ghost" data-bp-add="line" data-sec="${escapeHTML(sec.id)}">＋ Add item</button>
+        <label style="font-size:12px;color:var(--ink-faint);display:flex;align-items:center;gap:6px;"><input type="checkbox" data-bp="secfixed" data-sec="${escapeHTML(sec.id)}" ${sec.fixed?'checked':''}> Fixed (no cushion)</label>
+      </div>
+    </div>`;
+  }).join('');
+  return `
+  <div class="card">
+    <div class="field" style="margin-bottom:8px;"><label>Plan</label>
+      <select id="bpSel">${plans.map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===p.id?'selected':''}>${escapeHTML(x.name||'Plan')}</option>`).join('')}</select></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn sm" id="bpNew">＋ New</button><button class="btn sm ghost" id="bpDup">Duplicate</button><button class="btn sm ghost" id="bpRen">Rename</button><button class="btn sm danger" id="bpDel">Delete</button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div class="field" style="margin:0;"><label>Days to plan</label><input data-bp="days" type="text" inputmode="decimal" autocomplete="off" placeholder="30" value="${escapeHTML(p.days||'')}"></div>
+      <div class="field" style="margin:0;"><label>Price cushion %</label><input data-bp="cush" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${escapeHTML(p.cushion||'')}"></div>
+    </div>
+    <div class="hint" style="margin-top:6px;">Cushion adds that % on top of every section except the ones marked Fixed (like Saving).</div>
+  </div>
+  <div class="card" id="bpResult">${bpResultHTML(c)}</div>
+  <div class="card">
+    <div class="card-title">Income</div>
+    ${(p.income||[]).map(i=>`<div class="bp-row inc">
+      <input data-bp="inc" data-f="name" data-id="${escapeHTML(i.id)}" data-focus="${escapeHTML(i.id)}" maxlength="40" placeholder="Source (e.g. Salary)" value="${escapeHTML(i.name||'')}">
+      <input data-bp="inc" data-f="amount" data-id="${escapeHTML(i.id)}" type="text" inputmode="decimal" autocomplete="off" placeholder="৳" value="${escapeHTML(i.amount||'')}">
+      <button class="bp-x" data-bp-del="inc" data-id="${escapeHTML(i.id)}" aria-label="Delete income">✕</button></div>`).join('')}
+    <button class="btn sm ghost" data-bp-add="inc" style="margin-top:6px;">＋ Add income</button>
+  </div>
+  ${secHTML}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+    <button class="btn" id="bpAddSec">＋ Add section</button><button class="btn ghost" id="bpStarter">Add starter sections</button></div>
+  <div class="hint" style="margin-bottom:24px;">Standalone planner — it doesn't read or change your real expenses, budgets or reports. It is saved and backed up with the rest of your data.</div>`;
+}
+function bpFlush(){ if(bpSaveTimer){ clearTimeout(bpSaveTimer); bpSaveTimer = null; } saveDB(); }
+function bpSaveSoon(p){ if(p) p.updatedAt = new Date().toISOString(); if(bpSaveTimer) clearTimeout(bpSaveTimer); bpSaveTimer = setTimeout(()=>{ bpSaveTimer = null; saveDB(); }, 600); }
+function bpRefresh(p){
+  const c = bpCalc(p), view = document.getElementById('view');
+  const r = view.querySelector('#bpResult'); if(r) r.innerHTML = bpResultHTML(c);
+  c.sections.forEach(x=>{
+    const t = view.querySelector(`[data-sec-total="${x.id}"]`); if(t) t.textContent = fmtMoney(x.total);
+    x.lines.forEach(l=>{ const e = view.querySelector(`[data-line-total="${l.id}"]`); if(e) e.textContent = l.total>0 ? '= '+fmtMoney(l.total) : ''; });
+  });
+}
+function bpNewSection(name){ return {id:uid('bs'), name:name||'', fixed:/^saving$/i.test(name||''), lines:[]}; }
+function bpCreate(name, starters){
+  const now = new Date().toISOString();
+  const p = {id:uid('bp'), name, days:'30', cushion:'0', income:[], sections: starters ? BP_STARTERS.map(bpNewSection) : [], createdAt:now, updatedAt:now};
+  bpPlans().push(p); bpId = p.id; return p;
+}
+function bpNameModal(title, cur, withStarters, onOk){
+  openModal(`${modalHead(title)}
+    <div class="field"><label>Name</label><input id="bpName" maxlength="40" placeholder="e.g. November, Eid month, If income drops" value="${escapeHTML(cur||'')}"></div>
+    ${withStarters ? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:12px;"><input type="checkbox" id="bpSt" checked> Start with common sections (${escapeHTML(BP_STARTERS.join(', '))})</label>` : ''}
+    <div class="modal-actions"><button class="btn primary" id="bpOk">Save</button></div>`, {center:true, onMount: root=>{
+    const ok = ()=>{ const n = root.querySelector('#bpName').value.trim().slice(0,40); if(!n){ toast('Give the plan a name'); return; } const st = root.querySelector('#bpSt'); onOk(n, !!(st && st.checked)); };
+    root.querySelector('#bpOk').addEventListener('click', ok);
+    root.querySelector('#bpName').addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); ok(); } });
+  }});
+}
+function bindPlanner(){
+  const view = document.getElementById('view');
+  const nw = view.querySelector('#bpNew');
+  if(nw) nw.addEventListener('click', ()=>bpNameModal('New plan','',true,(n,st)=>{ bpCreate(n, st); bpFlush(); closeModal(); render(); }));
+  const p = bpActive(); if(!p) return;
+  const q = id => view.querySelector(id);
+  q('#bpSel').addEventListener('change', e=>{ bpFlush(); bpId = e.target.value; render(); });
+  q('#bpRen').addEventListener('click', ()=>bpNameModal('Rename plan', p.name, false, n=>{ p.name = n; p.updatedAt = new Date().toISOString(); bpFlush(); closeModal(); render(); }));
+  q('#bpDup').addEventListener('click', ()=>{
+    const src = JSON.parse(JSON.stringify(p)); const now = new Date().toISOString();
+    delete src._h; delete src._u;
+    src.id = uid('bp'); src.name = (p.name||'Plan').slice(0,32)+' (copy)'; src.createdAt = now; src.updatedAt = now;
+    (src.income||[]).forEach(i=>{ i.id = uid('bi'); delete i._h; delete i._u; });
+    (src.sections||[]).forEach(sec=>{ sec.id = uid('bs'); (sec.lines||[]).forEach(l=>{ l.id = uid('bl'); }); });
+    bpPlans().push(src); bpId = src.id; bpFlush(); toast('Plan duplicated'); render();
+  });
+  q('#bpDel').addEventListener('click', ()=>{
+    if(!confirm('Delete plan "'+(p.name||'Plan')+'"? This cannot be undone.')) return;
+    DB.budgetPlans = bpPlans().filter(x=>x.id!==p.id); bpId = null; bpFlush(); render();
+  });
+  view.querySelectorAll('[data-bp]').forEach(el=>{
+    const k = el.dataset.bp, sec = (p.sections||[]).find(x=>x.id===el.dataset.sec);
+    const apply = ()=>{
+      if(k==='days') p.days = el.value; else if(k==='cush') p.cushion = el.value;
+      else if(k==='inc'){ const i = (p.income||[]).find(x=>x.id===el.dataset.id); if(!i) return; i[el.dataset.f] = el.value; }
+      else if(k==='secname'){ if(!sec) return; sec.name = el.value; }
+      else if(k==='secfixed'){ if(!sec) return; sec.fixed = el.checked; }
+      else if(k==='line'){ const l = sec && (sec.lines||[]).find(x=>x.id===el.dataset.id); if(!l) return; l[el.dataset.f] = el.value; }
+      bpRefresh(p); bpSaveSoon(p);
+    };
+    el.addEventListener(k==='secfixed' ? 'change' : 'input', apply);
+    el.addEventListener('change', bpFlush);
+  });
+  view.querySelectorAll('[data-bp-add]').forEach(b=>b.addEventListener('click', ()=>{
+    const kind = b.dataset.bpAdd;
+    if(kind==='inc'){ const i = {id:uid('bi'), name:'', amount:''}; (p.income = p.income||[]).push(i); bpFocus = i.id; }
+    else { const sec = (p.sections||[]).find(x=>x.id===b.dataset.sec); if(!sec) return; const l = {id:uid('bl'), name:'', qty:'', price:''}; (sec.lines = sec.lines||[]).push(l); bpFocus = l.id; }
+    p.updatedAt = new Date().toISOString(); bpFlush(); render(); bpDoFocus();
+  }));
+  view.querySelectorAll('[data-bp-del]').forEach(b=>b.addEventListener('click', ()=>{
+    const kind = b.dataset.bpDel, sec = (p.sections||[]).find(x=>x.id===b.dataset.sec);
+    if(kind==='inc') p.income = (p.income||[]).filter(x=>x.id!==b.dataset.id);
+    else if(kind==='line'){ if(!sec) return; sec.lines = (sec.lines||[]).filter(x=>x.id!==b.dataset.id); }
+    else if(kind==='sec'){ if(!sec) return; if((sec.lines||[]).length && !confirm('Delete section "'+(sec.name||'unnamed')+'" and its '+sec.lines.length+' item(s)?')) return; p.sections = p.sections.filter(x=>x.id!==sec.id); }
+    p.updatedAt = new Date().toISOString(); bpFlush(); render();
+  }));
+  q('#bpAddSec').addEventListener('click', ()=>{ const sec = bpNewSection(''); (p.sections = p.sections||[]).push(sec); p.updatedAt = new Date().toISOString(); bpFlush(); render(); const e = view.querySelector(`[data-sec="${sec.id}"][data-bp="secname"]`); if(e) e.focus(); });
+  q('#bpStarter').addEventListener('click', ()=>{
+    const have = new Set((p.sections||[]).map(x=>String(x.name||'').trim().toLowerCase())); let n = 0;
+    BP_STARTERS.forEach(nm=>{ if(!have.has(nm.toLowerCase())){ (p.sections = p.sections||[]).push(bpNewSection(nm)); n++; } });
+    if(!n){ toast('You already have all the starter sections'); return; }
+    p.updatedAt = new Date().toISOString(); bpFlush(); render();
+  });
+}
+function bpDoFocus(){ if(!bpFocus) return; const e = document.getElementById('view').querySelector(`[data-focus="${bpFocus}"]`); bpFocus = null; if(e) e.focus(); }
 
 /* ---------- Calculator tab ---------- */
 function moneyCalcHTML(){
@@ -1973,10 +2173,12 @@ function openOutsideBreakdown(ym){
 
 /* ---------- page shell ---------- */
 function renderMoney(){
-  const tabs = [['log','Log'],['month','Month'],['dhar','Dhar'],['savings','Savings'],['calc','Calc']];
+  const tabs = [['log','Log'],['month','Month'],['dhar','Dhar'],['savings','Savings'],['calc','Calc'],['plan','Plan']];
   const body = moneyTab==='month' ? moneyMonthHTML() : moneyTab==='dhar' ? moneyDharHTML() :
-               moneyTab==='savings' ? moneySavingsHTML() : moneyTab==='calc' ? moneyCalcHTML() : moneyLogHTML();
-  return `${moneyStripHTML()}<div class="tabs">${tabs.map(t=>`<button class="tab ${moneyTab===t[0]?'active':''}" data-money-tab="${t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
+               moneyTab==='savings' ? moneySavingsHTML() : moneyTab==='calc' ? moneyCalcHTML() :
+               moneyTab==='plan' ? moneyPlannerHTML() : moneyLogHTML();
+  const strip = moneyTab==='plan' ? '' : moneyStripHTML();   // the planner is standalone: no real-money strip above it
+  return `${strip}<div class="tabs">${tabs.map(t=>`<button class="tab ${moneyTab===t[0]?'active':''}" data-money-tab="${t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
 }
 
 /* ---------- Log tab (expense / income) ---------- */
@@ -2768,6 +2970,8 @@ function bindMoney(){
     view.querySelectorAll('[data-earn-src]').forEach(n=>n.addEventListener('click',()=>openSourceDetail(n.dataset.earnSrc)));
     const et = view.querySelector('[data-earn-tuition]'); if(et) et.addEventListener('click',()=>openTuitionBreakdown(moneyMonth || todayISO().slice(0,7)));
     view.querySelector('#mCarryBtn').addEventListener('click', ()=>openCarryModal(moneyMonth || todayISO().slice(0,7)));
+  } else if(moneyTab==='plan'){
+    bindPlanner();
   } else if(moneyTab==='dhar'){
     view.querySelector('#lNew').addEventListener('click', ()=>openLoanForm());
     view.querySelectorAll('[data-loan]').forEach(n=>n.addEventListener('click',()=>openLoanDetail(n.dataset.loan)));

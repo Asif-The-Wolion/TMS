@@ -321,6 +321,9 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 .bp-row input,.bp-head input{width:100%;min-width:0;padding:9px 8px;background:var(--card2);border:1px solid var(--line2);border-radius:10px;color:var(--ink);color-scheme:dark;}
 .bp-row input:focus,.bp-head input:focus{outline:none;border-color:var(--amber);}
 .bp-row input::placeholder,.bp-head input::placeholder{color:var(--ink-faint);opacity:1;}
+.bm-kind{border-top:1px solid var(--line);padding:6px 0;}
+.bm-kind summary{cursor:pointer;padding:8px 0;}
+.bm-kind .field{margin-bottom:8px;}
 .bp-x{background:none;border:0;color:var(--ink-faint);font-size:16px;cursor:pointer;padding:4px;line-height:1;}
 .bp-sub{font-size:11px;color:var(--ink-faint);margin:0 0 8px 2px;min-height:14px;}
 .bp-head{display:grid;grid-template-columns:minmax(0,1fr) auto 26px;gap:8px;align-items:center;margin-bottom:8px;}
@@ -382,7 +385,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-28.2-readable-fields';
+const APP_BUILD = '2026-10-28.3-budgets-notes-income';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -1345,9 +1348,21 @@ function catEmoji(name, kind){
   for(const l of lists){ const f = l.find(x=>x.n===name); if(f) return f.e||''; }
   return DEFAULT_EMOJI[name]||'';
 }
-function catBudgetFor(name, kind){      // monthly budget for a category name (summed over the kinds in scope)
+/* ---- Per-month budgets ----
+   DB.settings['mb_YYYY-MM'] = {c:{personal:{Food:3000,...},business:{},farm:{}}, t:{personal,business,farm}, s:savingTarget}
+   One settings key per month, so two devices editing DIFFERENT months never collide in sync.
+   A month with no budget of its own copies the nearest EARLIER month that has one; before any month has one,
+   the old global (default) budget applies, so existing history reads exactly as it did. null = "reset". */
+function budgetNum(v){ v = Number(v); return isFinite(v) && v>0 ? round2(v) : 0; }
+function budgetCurYM(){ return todayISO().slice(0,7); }
+function budgetOwn(ym){ const v = DB.settings['mb_'+ym]; return (v && typeof v==='object' && !Array.isArray(v)) ? v : null; }
+function budgetOwnMonths(){ return Object.keys(DB.settings||{}).filter(k=>/^mb_\d{4}-\d{2}$/.test(k) && budgetOwn(k.slice(3))).map(k=>k.slice(3)).sort(); }
+function budgetSrcYM(ym){ ym = ym||budgetCurYM(); if(budgetOwn(ym)) return ym; const e = budgetOwnMonths().filter(m=>m<ym); return e.length ? e[e.length-1] : null; }
+function budgetSnap(ym){ const m = budgetSrcYM(ym); return m ? budgetOwn(m) : null; }
+function catBudgetOf(cat, kind, ym){ const sn = budgetSnap(ym); if(!sn) return cat.b; const c = sn.c && sn.c[kind]; return budgetNum(c ? c[cat.n] : 0); }
+function catBudgetFor(name, kind, ym){      // monthly budget for a category name (summed over the kinds in scope)
   const kinds = (kind && kind!=='all') ? [kind] : Object.keys(EXPENSE_KINDS);
-  return round2(kinds.reduce((a,k)=>{ const f = catListAll(k).find(x=>x.n===name); return a + (f ? f.b : 0); },0));
+  return round2(kinds.reduce((a,k)=>{ const f = catListAll(k).find(x=>x.n===name); return a + (f ? catBudgetOf(f,k,ym) : 0); },0));
 }
 function catPersist(kind, list){
   list = cleanCatList(list);
@@ -1456,53 +1471,55 @@ function expDayLabel(iso){
   return new Date(iso+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
 }
 function fmtNum(n){ return Number(n).toLocaleString('en-IN',{maximumFractionDigits:6}); }
-function budgetFor(kind){
+function budgetFor(kind, ym){
+  const sn = budgetSnap(ym);
+  if(sn) return budgetNum(sn.t && sn.t[kind]);
   const v = Number(kind==='business' ? DB.settings.monthlyBudgetBusiness : kind==='farm' ? DB.settings.monthlyBudgetFarm : DB.settings.monthlyBudgetPersonal);
   return isFinite(v) && v>0 ? v : 0;
 }
 /* ---- Budget totals ----
    If a kind has ANY visible category budget, its total budget is the SUM of those (automatic) and the manual total
    is ignored (kept in settings, comes back if the category budgets are removed). Otherwise the manual total applies. */
-function budgetedCats(kind){ return catListAll(kind).filter(x=>!x.h && x.b>0); }
+function budgetedCats(kind, ym){ return catListAll(kind).filter(x=>!x.h).map(x=>Object.assign({}, x, {b:catBudgetOf(x,kind,ym)})).filter(x=>x.b>0); }
 const SAVING_KEY = '§saving';        // internal key for the "Savings" row; never shown to the user
-function savingTarget(){ const v = Number(DB.settings.monthlySavingTarget); return isFinite(v) && v>0 ? round2(v) : 0; }
+function savingTarget(ym){ const sn = budgetSnap(ym); const v = Number(sn ? sn.s : DB.settings.monthlySavingTarget); return isFinite(v) && v>0 ? round2(v) : 0; }
 function savedOutIn(ym){ return Math.max(0, netSavedIn(ym)); }   // money net-moved INTO savings in a month: it left the pocket, so it counts as spent
 function autoNote(bi){ return `total of ${bi.count} category budget${bi.count===1?'':'s'}${bi.target>0?' + saving target':''}`; }
-function budgetInfo(kind){
-  const cats = budgetedCats(kind), sum = round2(cats.reduce((a,x)=>a+x.b,0)), tgt = kind==='personal' ? savingTarget() : 0;
+function budgetInfo(kind, ym){
+  const cats = budgetedCats(kind,ym), sum = round2(cats.reduce((a,x)=>a+x.b,0)), tgt = kind==='personal' ? savingTarget(ym) : 0;
   if(sum>0) return {total:round2(sum+tgt), auto:true, count:cats.length, target:tgt};     // saving target rides on top of the category budgets
-  return {total:budgetFor(kind), auto:false, count:0, target:0};
+  return {total:budgetFor(kind,ym), auto:false, count:0, target:0};
 }
 // Everything spent in a kind for a month (Personal also includes money put into savings), plus how much of it
 // is in categories that have no (visible) budget.
 function spentSplit(ym, kind){
-  const names = new Set(budgetedCats(kind).map(x=>x.n)), byCat = {};
+  const names = new Set(budgetedCats(kind,ym).map(x=>x.n)), byCat = {};
   let spent = 0, unb = 0;
   expensesFor(ym,kind).forEach(e=>{ const a = Number(e.amount)||0, c = e.category||'Other'; spent += a; byCat[c] = round2((byCat[c]||0)+a); if(!names.has(c)) unb += a; });
   const saved = kind==='personal' ? savedOutIn(ym) : 0;
-  if(saved>0){ spent += saved; byCat[SAVING_KEY] = saved; if(!(savingTarget()>0)) unb += saved; }
+  if(saved>0){ spent += saved; byCat[SAVING_KEY] = saved; if(!(savingTarget(ym)>0)) unb += saved; }
   return {spent:round2(spent), unbudgeted:round2(unb), byCat, saved};
 }
 function overBudgetKinds(ym){
   const out = [];
-  Object.keys(EXPENSE_KINDS).forEach(k=>{ const b = budgetInfo(k).total; if(!(b>0)) return; const sp = spentSplit(ym,k).spent; if(sp>b) out.push({kind:k, name:EXPENSE_KINDS[k], by:round2(sp-b)}); });
+  Object.keys(EXPENSE_KINDS).forEach(k=>{ const b = budgetInfo(k,ym).total; if(!(b>0)) return; const sp = spentSplit(ym,k).spent; if(sp>b) out.push({kind:k, name:EXPENSE_KINDS[k], by:round2(sp-b)}); });
   return out;
 }
 // Short, rule-based hints. Current month only; nothing at all when nothing is wrong. Max 2.
 function budgetTips(ym){
   if(ym!==todayISO().slice(0,7)) return [];
   const dim = daysInMonthYM(ym), elapsed = Number(todayISO().slice(8,10)), dl = dim-elapsed+1;   // days left, today included
-  const kinds = Object.keys(EXPENSE_KINDS).filter(k=>budgetInfo(k).total>0);
+  const kinds = Object.keys(EXPENSE_KINDS).filter(k=>budgetInfo(k,ym).total>0);
   if(!kinds.length) return [];
   const pre = k => kinds.length>1 ? EXPENSE_KINDS[k]+': ' : '';
   const over = [], pace = [], burn = [], misc = [];
   kinds.forEach(k=>{
-    const bi = budgetInfo(k), sp = spentSplit(ym,k), spent = sp.spent;
-    const reserve = k==='personal' ? Math.max(savingTarget(), sp.saved) : 0, expSpent = round2(spent-sp.saved), room = round2(bi.total-reserve);   // pace looks at real spending only, with the saving kept aside
+    const bi = budgetInfo(k,ym), sp = spentSplit(ym,k), spent = sp.spent;
+    const reserve = k==='personal' ? Math.max(savingTarget(ym), sp.saved) : 0, expSpent = round2(spent-sp.saved), room = round2(bi.total-reserve);   // pace looks at real spending only, with the saving kept aside
     if(spent>bi.total){
-      const worst = bi.auto ? budgetedCats(k).map(x=>({n:x.n, d:round2((sp.byCat[x.n]||0)-x.b)})).filter(x=>x.d>0).sort((a,b)=>b.d-a.d).slice(0,2) : [];
+      const worst = bi.auto ? budgetedCats(k,ym).map(x=>({n:x.n, d:round2((sp.byCat[x.n]||0)-x.b)})).filter(x=>x.d>0).sort((a,b)=>b.d-a.d).slice(0,2) : [];
       if(worst.length) over.push({t:pre(k)+'Over because of '+worst.map(x=>x.n+' +'+fmtMoney(x.d)).join(', ')+'.', c:'err'});
-      else if(k==='personal' && savingTarget()>0 && sp.saved>savingTarget()) over.push({t:pre(k)+'Over because you saved '+fmtMoney(round2(sp.saved-savingTarget()))+' more than your target.', c:'err'});
+      else if(k==='personal' && savingTarget(ym)>0 && sp.saved>savingTarget(ym)) over.push({t:pre(k)+'Over because you saved '+fmtMoney(round2(sp.saved-savingTarget(ym)))+' more than your target.', c:'err'});
       else if(bi.auto && sp.unbudgeted>0) over.push({t:pre(k)+'Over, and '+fmtMoney(sp.unbudgeted)+' of your spending is in categories with no budget.', c:'err'});
     } else if(elapsed>=7 && expSpent>0){
       const proj = Math.round(expSpent/elapsed*dim);
@@ -1512,11 +1529,11 @@ function budgetTips(ym){
       }
     }
     if(bi.auto && elapsed<=20){
-      budgetedCats(k).forEach(x=>{ const s2 = sp.byCat[x.n]||0, u = Math.round(s2/x.b*100); if(s2<=x.b && u>=85) burn.push({u, t:pre(k)+`${x.n} is at ${u}% on day ${elapsed}.`, c:'warn'}); });
+      budgetedCats(k,ym).forEach(x=>{ const s2 = sp.byCat[x.n]||0, u = Math.round(s2/x.b*100); if(s2<=x.b && u>=85) burn.push({u, t:pre(k)+`${x.n} is at ${u}% on day ${elapsed}.`, c:'warn'}); });
     }
   });
   if(elapsed>=15){                                   // tuition often arrives mid-month, so this one waits
-    const sum = round2(kinds.reduce((a,k)=>a+budgetInfo(k).total,0)), can = moneyPlan(ym).canSpend;
+    const sum = round2(kinds.reduce((a,k)=>a+budgetInfo(k,ym).total,0)), can = moneyPlan(ym).canSpend;
     if(can>0 && sum>can) misc.push({t:`Your budgets total ${fmtMoney(sum)} but this month's plan says you can spend ${fmtMoney(can)} — ${fmtMoney(round2(sum-can))} more than you have.`, c:'warn'});
   }
   burn.sort((a,b)=>b.u-a.u);
@@ -1606,28 +1623,46 @@ function openExpenseEdit(id){
 }
 
 
-function openBudgetModal(){
-  const auto = {}; Object.keys(EXPENSE_KINDS).forEach(k=>{ auto[k] = budgetInfo(k); });
-  const fld = (id,k,label)=> auto[k].auto
-    ? `<div class="field"><label>${label}</label><input id="${id}" type="text" value="${fmtMoney(auto[k].total)}" disabled><div class="hint">Automatic: ${autoNote(auto[k])}. Change them in Manage categories.</div></div>`
-    : `<div class="field"><label>${label} (৳, 0 = none)</label><input id="${id}" type="text" inputmode="decimal" value="${budgetFor(k)||''}"></div>`;
+function openBudgetModal(ym){
+  ym = ym || budgetCurYM();
+  const own = !!budgetOwn(ym), src = budgetSrcYM(ym), kinds = Object.keys(EXPENSE_KINDS);
+  const where = own ? 'This month has its own budget.' : (src ? `Not set yet: it is copying ${monthLabel(src)}. Save to give ${monthLabel(ym)} its own budget.` : `Not set yet: it uses your default budget. Save to give ${monthLabel(ym)} its own budget.`);
+  const secHTML = k => `<details class="bm-kind" data-bm-kind="${k}" ${k==='personal'?'open':''}>
+      <summary><b>${EXPENSE_KINDS[k]}</b> <span class="hint" data-bm-sum="${k}" style="display:inline;"></span></summary>
+      ${catListAll(k).filter(c=>!c.h).map(c=>`<div class="field"><label>${escapeHTML((c.e?c.e+' ':'')+c.n)}</label><input type="text" inputmode="decimal" data-bm-cat="${k}" data-bm-name="${escapeHTML(c.n)}" value="${catBudgetOf(c,k,ym)||''}"></div>`).join('')}
+      <div class="field"><label>Total if you use no category amounts (৳)</label><input type="text" inputmode="decimal" data-bm-t="${k}" value="${budgetFor(k,ym)||''}"><div class="hint">Used only when every category amount above is blank.</div></div>
+    </details>`;
   openModal(`
-    ${modalHead('Monthly budget')}
-    ${fld('bPersonal','personal','Personal')}
-    <div class="field"><label>Saving target per month (৳, 0 = none)</label><input id="bSaving" type="text" inputmode="decimal" value="${savingTarget()||''}"><div class="hint">Money you put into savings counts as spent, because it leaves your pocket. With category budgets, this target is added to your Personal total.</div></div>
-    ${fld('bBusiness','business','Teaching')}
-    ${fld('bFarm','farm','Farm')}
-    <div class="modal-actions"><button class="btn primary" id="bSave">Save</button></div>
+    ${modalHead('Budget — '+monthLabel(ym))}
+    <div class="hint" style="margin-bottom:10px;">${where} Only ${monthLabel(ym)} changes; other months keep their own.</div>
+    <div class="field"><label>Saving target this month (৳, 0 = none)</label><input id="bSaving" type="text" inputmode="decimal" value="${savingTarget(ym)||''}"><div class="hint">Money you put into savings counts as spent, because it leaves your pocket. With category amounts, this target is added to your Personal total.</div></div>
+    ${kinds.map(secHTML).join('')}
+    <div class="modal-actions">${own?'<button class="btn danger" id="bReset">Reset month</button>':''}<button class="btn primary" id="bSave">Save</button></div>
   `, {center:true, onMount: root=>{
+    const num = el => { const v = el.value.trim(); if(!v) return 0; const r = safeCalc(v); return r.ok && r.value>0 ? round2(r.value) : NaN; };
+    const upd = () => kinds.forEach(k=>{
+      let sum = 0; root.querySelectorAll(`[data-bm-cat="${k}"]`).forEach(el=>{ const v = num(el); if(v>0) sum += v; });
+      const t = num(root.querySelector(`[data-bm-t="${k}"]`)), tot = sum>0 ? sum : (t>0 ? t : 0);
+      root.querySelector(`[data-bm-sum="${k}"]`).textContent = tot>0 ? '· '+fmtMoney(round2(tot)) : '';
+    });
+    root.querySelectorAll('input').forEach(el=>el.addEventListener('input', upd)); upd();
     root.querySelector('#bSave').addEventListener('click',()=>{
-      const read = (id,k) => { if(auto[k] && auto[k].auto) return budgetFor(k); const v = root.querySelector(id).value.trim(); if(!v) return 0; const r = safeCalc(v); return r.ok && r.value>0 ? round2(r.value) : NaN; };
-      const p = read('#bPersonal','personal'), b = read('#bBusiness','business'), fm = read('#bFarm','farm'), sv = read('#bSaving','saving');
-      if(isNaN(p) || isNaN(b) || isNaN(fm) || isNaN(sv)){ toast('Enter a valid number, or leave blank'); return; }
-      DB.settings.monthlySavingTarget = sv;
-      DB.settings.monthlyBudgetPersonal = p;
-      DB.settings.monthlyBudgetBusiness = b;
-      DB.settings.monthlyBudgetFarm = fm;
-      saveDB(); closeModal(); toast('Budget saved'); render();
+      const snap = {c:{}, t:{}, s:0}; let bad = false;
+      kinds.forEach(k=>{
+        snap.c[k] = {};
+        root.querySelectorAll(`[data-bm-cat="${k}"]`).forEach(el=>{ const v = num(el); if(isNaN(v)) bad = true; else if(v>0) snap.c[k][el.dataset.bmName] = v; });
+        const t = num(root.querySelector(`[data-bm-t="${k}"]`)); if(isNaN(t)) bad = true; else snap.t[k] = t;
+      });
+      const sv = num(root.querySelector('#bSaving')); if(isNaN(sv)) bad = true; else snap.s = sv;
+      if(bad){ toast('Enter a valid number, or leave blank'); return; }
+      DB.settings['mb_'+ym] = snap;
+      saveDB(); closeModal(); toast('Budget saved for '+monthLabel(ym)); render();
+    });
+    const rs = root.querySelector('#bReset');
+    if(rs) rs.addEventListener('click',()=>{
+      if(!confirm('Remove the budget set for '+monthLabel(ym)+'? It will go back to copying the last month you set.')) return;
+      DB.settings['mb_'+ym] = null;        // null (not delete) so the reset syncs like any other change
+      saveDB(); closeModal(); toast('Month reset'); render();
     });
   }});
 }
@@ -2514,7 +2549,7 @@ function openCategoryManager(tab){
     <div class="hint" style="margin-bottom:8px;">${isInc?'Sources you can pick when adding income. Tuition is automatic from Fees.':'Categories for '+EXPENSE_KINDS[kind]+' expenses.'} Renaming updates your old entries too.</div>
     <div class="list">${list.map((c,i)=>{ const n = catUsage(kind,c.n); return `<div class="item">
       <div class="body"><div class="title">${escapeHTML((c.e?c.e+' ':'')+c.n)}${c.h?' <span style="opacity:.6;font-weight:400;">(hidden)</span>':''}</div>
-        <div class="meta">${n} entr${n===1?'y':'ies'}${c.b>0?' · budget '+fmtMoney(c.b)+'/month':''}</div></div>
+        <div class="meta">${n} entr${n===1?'y':'ies'}${c.b>0?' · default budget '+fmtMoney(c.b)+'/month':''}</div></div>
       <div style="white-space:nowrap;"><button class="btn sm ghost" data-cm-up="${i}" ${i===0?'disabled':''}>↑</button><button class="btn sm ghost" data-cm-down="${i}" ${i===list.length-1?'disabled':''}>↓</button><button class="btn sm" data-cm-edit="${i}">Edit</button></div></div>`; }).join('')}</div>
     <div class="field" style="margin-top:12px;"><label>Add a ${isInc?'source':'category'}</label>
       <div style="display:flex;gap:8px;"><input id="cmNew" type="text" maxlength="30" placeholder="${isInc?'e.g. Rice sale':'e.g. Medicine'}" autocomplete="off"><button class="btn primary" id="cmAdd">Add</button></div></div>
@@ -2546,7 +2581,7 @@ function openCategoryEdit(kind, i){
     ${modalHead('Edit '+(isInc?'source':'category'))}
     <div class="field"><label>Name</label><input id="ceName" type="text" maxlength="30" value="${escapeHTML(c.n)}"></div>
     <div class="field"><label>Emoji (optional)</label><input id="ceEmoji" type="text" maxlength="8" value="${escapeHTML(c.e||'')}"></div>
-    ${isInc?'':`<div class="field"><label>Monthly budget for this category (৳, blank = none)</label><input id="ceBudget" type="text" inputmode="decimal" value="${c.b>0?c.b:''}"></div>`}
+    ${isInc?'':`<div class="field"><label>Default monthly budget (৳, blank = none)</label><input id="ceBudget" type="text" inputmode="decimal" value="${c.b>0?c.b:''}"><div class="hint">Only used for months that have no budget of their own. To set one month, open Money → Month → Set budget.</div></div>`}
     <div class="field"><label><input type="checkbox" id="ceHide" ${c.h?'checked':''} style="width:auto;margin-right:6px;">Hide from the picker (old entries stay)</label></div>
     <div class="hint" style="margin-bottom:8px;">${used} entr${used===1?'y uses':'ies use'} this ${isInc?'source':'category'}.</div>
     <div class="modal-actions"><button class="btn danger" id="ceDel">Delete</button><button class="btn primary" id="ceSave">Save</button></div>
@@ -2580,8 +2615,8 @@ function openCategoryEdit(kind, i){
 }
 
 /* The "🏦 Savings" row: money put into savings counts as spent. With a target it shows progress (reaching or beating it is never red). */
-function savingRowHTML(saved, totalSpent, maxBar){
-  const tgt = savingTarget();
+function savingRowHTML(saved, totalSpent, maxBar, ym){
+  const tgt = savingTarget(ym);
   if(!(tgt>0)){
     return `
       <div style="margin-bottom:12px;cursor:pointer;" data-saving-row>
@@ -2597,14 +2632,43 @@ function savingRowHTML(saved, totalSpent, maxBar){
         <div class="hint" data-saving-left style="${done?'color:var(--ok);':''}">${done?'Target reached':`${fmtMoney(round2(tgt-saved))} to go · ${used}% of target`}</div>
       </div>`;
 }
-function catRowsHTML(cats, byCat, f, totalSpent, maxCat, isCur, dim, elapsed, savedOut, showSaving){
-  const rows = cats.map(c=>({amt:byCat[c], html:catRowHTML(c, catEmoji(c,f), byCat[c], catBudgetFor(c,f), totalSpent, maxCat, isCur, dim, elapsed)}));
-  if(showSaving) rows.push({amt:savedOut, html:savingRowHTML(savedOut, totalSpent, Math.max(maxCat,savedOut))});
-  return rows.sort((a,b)=>b.amt-a.amt).map(r=>r.html).join('');     // stable: equal amounts keep their order
+/* When a budgeted category goes OVER, that overspend is paid out of the OTHER categories' remaining room, in
+   proportion to how much room each has, so every row's "left" adds up to the real total left. Display only: no
+   budget and no expense is changed, and the Saving target is never reduced. If the overspend is bigger than all the
+   room that is left, the other rows show 0 and `short` is how far over you are overall. */
+function budgetAbsorb(ym, f, byCat){
+  const kinds = (f && f!=='all') ? [f] : Object.keys(EXPENSE_KINDS), pool = {};
+  kinds.forEach(k=>budgetedCats(k,ym).forEach(x=>{ pool[x.n] = round2((pool[x.n]||0)+x.b); }));
+  const names = Object.keys(pool), info = {}, overNames = [];
+  let over = 0;
+  names.forEach(n=>{
+    const d = round2(pool[n]-(byCat[n]||0));
+    if(d<0){ over = round2(over-d); overNames.push(n); info[n] = {left:0, cut:0, over:true}; }
+    else info[n] = {left:d, cut:0, over:false};
+  });
+  const room = round2(names.reduce((a,n)=>a+(info[n].over?0:info[n].left),0));
+  if(over>0 && room>0){
+    const take = Math.min(over, room), ok = names.filter(n=>!info[n].over && info[n].left>0);
+    let given = 0;
+    ok.forEach((n,i)=>{
+      let c = i===ok.length-1 ? round2(take-given) : Math.round(take*info[n].left/room);   // whole taka; the last one takes the remainder so the total is exact
+      c = Math.max(0, Math.min(c, info[n].left)); info[n].cut = c; info[n].left = round2(info[n].left-c); given = round2(given+c);
+    });
+  }
+  return {info, over, room, short: over>room ? round2(over-room) : 0, overNames};
+}
+function catRowsHTML(cats, byCat, f, totalSpent, maxCat, isCur, dim, elapsed, savedOut, showSaving, ym){
+  const ab = budgetAbsorb(ym, f, byCat);
+  // While something is overspent, budgeted categories with no spending yet are listed too, so you can see how much room they really have left.
+  const listed = ab.over>0 ? cats.concat(Object.keys(ab.info).filter(n=>cats.indexOf(n)<0)) : cats;
+  const rows = listed.map(c=>({amt:byCat[c]||0, html:catRowHTML(c, catEmoji(c,f), byCat[c]||0, catBudgetFor(c,f,ym), totalSpent, maxCat, isCur, dim, elapsed, ab.info[c])}));
+  if(showSaving) rows.push({amt:savedOut, html:savingRowHTML(savedOut, totalSpent, Math.max(maxCat,savedOut), ym)});
+  const note = ab.over>0 ? `<div class="hint" data-absorb-note style="color:var(--amber);margin-bottom:10px;">${escapeHTML(ab.overNames.join(', '))} ${ab.overNames.length===1?'is':'are'} over by ${fmtMoney(ab.over)}. ${ab.room>0 ? 'That is taken from the other categories\' remaining room, so their "left" below is what you can really still spend.' : 'Nothing is left in the other categories to cover it.'}${ab.short>0 ? ` You are ${fmtMoney(ab.short)} over overall.` : ''}</div>` : '';
+  return note + rows.sort((a,b)=>b.amt-a.amt).map(r=>r.html).join('');     // stable: equal amounts keep their order
 }
 /* One "By category" row. Budgeted category: spent of budget + how much is LEFT (and % of the budget used,
    not share-of-total). Unbudgeted category: unchanged (share of total + bar relative to the biggest category). */
-function catRowHTML(c, em, spent, cb, total, maxCat, isCur, dim, elapsed){
+function catRowHTML(c, em, spent, cb, total, maxCat, isCur, dim, elapsed, ab){
   const label = escapeHTML((em?em+' ':'')+c);
   if(!(cb>0)){
     return `
@@ -2613,12 +2677,13 @@ function catRowHTML(c, em, spent, cb, total, maxCat, isCur, dim, elapsed){
         <div class="progress-bar"><div style="width:${maxCat>0?Math.round(spent/maxCat*100):0}%;"></div></div>
       </div>`;
   }
-  const used = Math.round(spent/cb*100), over = spent>cb, left = round2(cb-spent), warn = !over && used>=85;
+  const used = Math.round(spent/cb*100), over = spent>cb, left = (ab && !ab.over) ? ab.left : round2(cb-spent), cut = (ab && !ab.over) ? ab.cut : 0, warn = !over && (used>=85 || (cut>0 && left<=0));
   const color = over ? 'var(--err)' : warn ? 'var(--amber)' : '';
   let note;
   if(over){ note = `Over by ${fmtMoney(round2(spent-cb))} · ${used}% used`; }
   else {
     note = `${fmtMoney(left)} left · ${used}% used`;
+    if(cut>0) note += ` · ${fmtMoney(cut)} of its room covers overspending`;
     if(isCur && left>0){                                   // only the running month: days left include today
       const dl = dim-elapsed+1, perDay = dl>0 ? Math.floor(left/dl) : 0;
       if(perDay>0) note += ` · ${fmtMoney(perDay)}/day for ${dl} day${dl===1?'':'s'}`;
@@ -2639,7 +2704,7 @@ function moneyMonthHTML(){
   const f = moneyFilter;
   const list = expensesFor(ym,f);
   const total = sumAmt(list);
-  const savedOut = (f==='all'||f==='personal') ? savedOutIn(ym) : 0, showSaving = (f==='all'||f==='personal') && (savedOut>0 || savingTarget()>0);
+  const savedOut = (f==='all'||f==='personal') ? savedOutIn(ym) : 0, showSaving = (f==='all'||f==='personal') && (savedOut>0 || savingTarget(ym)>0);
   const totalSpent = round2(total + savedOut);                       // avg / projection / vs-last-month stay on real spending (total)
   const isCur = ym===cur;
   const dim = daysInMonthYM(ym);
@@ -2661,8 +2726,8 @@ function moneyMonthHTML(){
   list.forEach(e=>{ const c=e.category||'Other'; byCat[c]=round2((byCat[c]||0)+(Number(e.amount)||0)); });
   const cats = Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]);
   const maxCat = cats.length ? byCat[cats[0]] : 0;
-  const budgetRows = Object.keys(EXPENSE_KINDS).filter(k=>budgetInfo(k).total>0).map(k=>{
-    const bi = budgetInfo(k), sp = spentSplit(ym,k), spent = sp.spent, b = bi.total, pct = Math.min(100,Math.round(spent/b*100));
+  const budgetRows = Object.keys(EXPENSE_KINDS).filter(k=>budgetInfo(k,ym).total>0).map(k=>{
+    const bi = budgetInfo(k,ym), sp = spentSplit(ym,k), spent = sp.spent, b = bi.total, pct = Math.min(100,Math.round(spent/b*100));
     const over = spent>b;
     const extra = (bi.auto ? `<div class="hint">Automatic: ${autoNote(bi)}${sp.unbudgeted>0?` · ${fmtMoney(sp.unbudgeted)} of this is in categories with no budget`:''}</div>` : '') + (sp.saved>0 ? `<div class="hint">Includes ${fmtMoney(sp.saved)} put into savings.</div>` : '');
     return `<div style="margin-bottom:12px;">
@@ -2691,12 +2756,13 @@ function moneyMonthHTML(){
   <div class="card">
     <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">Budget</div><button class="btn sm" id="mBudgetBtn">Set budget</button></div>
     ${budgetRows || `<div class="hint">No monthly budget set.</div>`}
+    ${budgetRows ? `<div class="hint" data-budget-src>${budgetOwn(ym) ? 'Budget set for this month.' : (budgetSrcYM(ym) ? 'Copying '+monthLabel(budgetSrcYM(ym))+'. Tap Set budget to give this month its own.' : 'Using your default budget. Tap Set budget to give this month its own.')}</div>` : ''}
     ${budgetTipsHTML(ym)}
   </div>
   ${earnCardHTML(ym)}
   <div class="card">
     <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">By category</div><button class="btn sm" id="mCatManage">Manage</button></div>
-    ${(cats.length===0 && !showSaving) ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : catRowsHTML(cats, byCat, f, totalSpent, maxCat, isCur, dim, elapsed, savedOut, showSaving)}
+    ${(cats.length===0 && !showSaving) ? `<div class="empty" style="padding:18px;">No expenses in this month.</div>` : catRowsHTML(cats, byCat, f, totalSpent, maxCat, isCur, dim, elapsed, savedOut, showSaving, ym)}
     <div class="hint">Tap a category to see its history.</div>
   </div>
   ${incs.length ? `<div class="card"><div class="card-title">Outside income</div><div class="list">${incs.map(i=>incomeItemHTML(i,true)).join('')}</div></div>` : ''}
@@ -2970,7 +3036,7 @@ function bindMoney(){
   } else if(moneyTab==='month'){
     view.querySelector('#mMonth').addEventListener('change', e=>{ moneyMonth = /^\d{4}-\d{2}$/.test(e.target.value) ? e.target.value : null; render(); });
     view.querySelectorAll('[data-money-filter]').forEach(b=>b.addEventListener('click',()=>{ moneyFilter=b.dataset.moneyFilter; render(); }));
-    view.querySelector('#mBudgetBtn').addEventListener('click', openBudgetModal);
+    view.querySelector('#mBudgetBtn').addEventListener('click', ()=>openBudgetModal(moneyMonth || todayISO().slice(0,7)));
     const cm = view.querySelector('#mCatManage'); if(cm) cm.addEventListener('click',()=>openCategoryManager(moneyFilter!=='all'?moneyFilter:'personal'));
     view.querySelectorAll('[data-cat-detail]').forEach(n=>n.addEventListener('click',()=>openCategoryDetail(n.dataset.catDetail, moneyFilter)));
     view.querySelectorAll('[data-saving-row]').forEach(n=>n.addEventListener('click',()=>{ moneyTab='savings'; render(); window.scrollTo(0,0); }));
@@ -3628,6 +3694,7 @@ function renderDashboard(){
 
   return `
   <div class="page-sub">${readableDate(iso)} · ${DB.settings.location}</div>
+  ${DB.settings.dashNotesTop ? renderNotesCard() : ''}
 
   ${sheetsBackupStale? `
   <div class="card" style="border-color:var(--err);cursor:pointer;" data-nav-page="settings">
@@ -3714,34 +3781,60 @@ function renderDashboard(){
       : `<div class="empty" style="padding:16px;">No tasks for today. <br><button class="btn sm" style="margin-top:8px;" data-nav-page="study">Add one</button></div>`}
   </div>
 
-  ${renderNotesCard()}
+  ${DB.settings.dashNotesTop ? '' : renderNotesCard()}
   `;
 }
-// Pending (not-done) notes, soonest date first. A note with no date sorts
-// last — it's a loose reminder rather than something tied to a specific day.
-function pendingNotes(){
-  return (DB.notes||[]).filter(n=>!n.done).sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
-}
+// Notes order (dashboard + Notes page): due-today / overdue Reminders first, then pinned, then everything else.
+// Inside a group the order is the note's `ord` (set when you move it) or, if it was never moved, newest first.
+// Notes saved before this feature have no ord/pin and simply sort newest first.
 const NOTE_CATEGORIES = ['Lending','Reminder','Personal','Other'];
 function noteCategoryColor(cat){
   return cat==='Lending'?'var(--amber)':cat==='Reminder'?'var(--err)':cat==='Personal'?'var(--ok)':'var(--ink-faint)';
 }
+function noteOrd(n){ return (typeof n.ord==='number' && isFinite(n.ord)) ? n.ord : -(Date.parse(n.createdAt)||0); }
+function noteRank(n){ return (n.category==='Reminder' && n.date && n.date<=todayISO()) ? 0 : (n.pin ? 1 : 2); }
+function noteCompare(a,b){
+  const ra = noteRank(a), rb = noteRank(b);
+  return (ra-rb) || (ra===0 ? String(a.date).localeCompare(String(b.date)) : 0) || (noteOrd(a)-noteOrd(b)) || String(a.id).localeCompare(String(b.id));
+}
+function pendingNotes(){ return (DB.notes||[]).filter(n=>!n.done).sort(noteCompare); }
+function noteMove(id, dir){
+  const list = pendingNotes(), i = list.findIndex(n=>n.id===id), j = i+dir;
+  if(i<0 || j<0 || j>=list.length) return false;
+  const a = list[i], b = list[j];
+  if(noteRank(a)!==noteRank(b) || noteRank(a)===0) return false;      // never across groups; due reminders stay in date order
+  const oa = noteOrd(a), ob = noteOrd(b);
+  if(oa===ob){ a.ord = dir<0 ? ob-1 : ob+1; }
+  else { a.ord = ob; b.ord = oa; }
+  return true;
+}
+let notesArrange = false;
+function dashNotesCount(){ const v = Number(DB.settings.dashNotesCount); return (v===3||v===5||v===8) ? v : 5; }
 function renderNotesCard(){
-  const pending = pendingNotes();
-  const shown = pending.slice(0,4);
-  return `
-  <div class="card">
-    <div class="card-title">Notes</div>
-    ${shown.length? `<div class="list">${shown.map(n=>`
-      <div class="item">
+  const pending = pendingNotes(), cnt = dashNotesCount(), shown = pending.slice(0,cnt), arr = notesArrange, today = todayISO();
+  const rows = shown.map((n,idx)=>{
+    const rk = noteRank(n), prev = shown[idx-1], next = shown[idx+1];
+    const canUp = !!prev && noteRank(prev)===rk && rk!==0, canDown = !!next && noteRank(next)===rk && rk!==0;
+    const due = rk===0 ? (n.date===today ? ' · <b style="color:var(--err);">Due today</b>' : ' · <b style="color:var(--err);">Overdue</b>') : '';
+    return `
+      <div class="item" data-note-row="${n.id}">
         <div class="dot" style="background:${noteCategoryColor(n.category)}"></div>
-        <div class="body" style="cursor:pointer;" data-open-note="${n.id}"><div class="title">${escapeHTML(n.subject)}</div><div class="meta">${n.category}${n.date?' · '+readableDate(n.date):''}</div></div>
-        <button class="btn sm" data-toggle-note="${n.id}">Done</button>
-      </div>`).join('')}</div>`
-      : `<div class="empty" style="padding:16px;">No pending notes.</div>`}
+        <div class="body" style="cursor:pointer;" data-open-note="${n.id}"><div class="title">${n.pin?'📌 ':''}${escapeHTML(n.subject)}</div><div class="meta">${n.category}${n.date?' · '+readableDate(n.date):''}${due}</div></div>
+        ${arr ? `<div style="white-space:nowrap;"><button class="btn sm ghost" data-note-pin="${n.id}" aria-label="Pin">${n.pin?'📌':'📍'}</button><button class="btn sm ghost" data-note-up="${n.id}" ${canUp?'':'disabled'} aria-label="Move up">▲</button><button class="btn sm ghost" data-note-down="${n.id}" ${canDown?'':'disabled'} aria-label="Move down">▼</button></div>`
+              : `<button class="btn sm" data-toggle-note="${n.id}">Done</button>`}
+      </div>`;
+  }).join('');
+  return `
+  <div class="card" data-notes-card>
+    <div class="row" style="margin-bottom:8px;"><div class="card-title" style="margin:0;">Notes${pending.length?' ('+pending.length+')':''}</div><button class="btn sm ${arr?'primary':''}" id="notesArrangeBtn">${arr?'Finish':'Arrange'}</button></div>
+    ${arr ? `
+    <div class="hint" style="margin-bottom:6px;">Newest notes come first. Pin a note to keep it above the rest, and move it with ▲ ▼. Reminders that are due always stay on top.</div>
+    <div class="chip-select" style="margin-bottom:8px;"><span class="hint" style="align-self:center;">Show</span>${[3,5,8].map(v=>`<button type="button" class="chip ${v===cnt?'on':''}" data-notes-count="${v}">${v}</button>`).join('')}</div>
+    <div class="field" style="margin:0 0 10px;"><label><input type="checkbox" id="notesTopChk" ${DB.settings.dashNotesTop?'checked':''} style="width:auto;margin-right:6px;">Show this card at the top of the dashboard</label></div>` : ''}
+    ${shown.length? `<div class="list">${rows}</div>` : `<div class="empty" style="padding:16px;">No pending notes.</div>`}
     <div style="display:flex;gap:8px;margin-top:10px;">
       <button class="btn sm" id="addNoteBtn">+ Add Note</button>
-      ${(DB.notes||[]).length ? `<button class="btn sm" data-nav-page="notes">See all</button>` : ''}
+      ${(DB.notes||[]).length ? `<button class="btn sm" data-nav-page="notes">See all${pending.length>shown.length?' (+'+(pending.length-shown.length)+' more)':''}</button>` : ''}
     </div>
   </div>`;
 }
@@ -3757,6 +3850,17 @@ function bindNotesCard(){
   view.querySelectorAll('[data-open-note]').forEach(el=>el.addEventListener('click',()=>{
     openNoteForm(el.dataset.openNote);
   }));
+  const arrBtn = view.querySelector('#notesArrangeBtn');
+  if(arrBtn) arrBtn.addEventListener('click',()=>{ notesArrange = !notesArrange; render(); });
+  view.querySelectorAll('[data-notes-count]').forEach(el=>el.addEventListener('click',()=>{ DB.settings.dashNotesCount = Number(el.dataset.notesCount); saveDB(); render(); }));
+  const topChk = view.querySelector('#notesTopChk');
+  if(topChk) topChk.addEventListener('change',()=>{ DB.settings.dashNotesTop = topChk.checked; saveDB(); render(); });
+  view.querySelectorAll('[data-note-pin]').forEach(el=>el.addEventListener('click',()=>{
+    const n = (DB.notes||[]).find(x=>x.id===el.dataset.notePin); if(!n) return;
+    n.pin = !n.pin; saveDB(); render();
+  }));
+  view.querySelectorAll('[data-note-up]').forEach(el=>el.addEventListener('click',()=>{ if(noteMove(el.dataset.noteUp,-1)){ saveDB(); render(); } }));
+  view.querySelectorAll('[data-note-down]').forEach(el=>el.addEventListener('click',()=>{ if(noteMove(el.dataset.noteDown,1)){ saveDB(); render(); } }));
 }
 function openNoteForm(noteId){
   const n = noteId ? (DB.notes||[]).find(x=>x.id===noteId) : null;
@@ -3800,7 +3904,7 @@ function openNoteForm(noteId){
 function renderNotesPage(filterCategory, showDone){
   const all = DB.notes||[];
   let list = all.filter(n=> (showDone || !n.done) && (!filterCategory || n.category===filterCategory));
-  list = list.sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
+  list = list.sort((a,b)=>(Number(!!a.done)-Number(!!b.done)) || noteCompare(a,b));
   return `
   <div class="field" style="display:flex;gap:8px;">
     <select id="notesFilterCategory" style="flex:1;">
@@ -5158,7 +5262,7 @@ const TIME_WINDOW_DAYS = 30;
 
 // Money for one month, split the same way the old Income Reference did (madrasa students pulled out first;
 // among tutoring students, belonging to a batch group = "batch", otherwise "private").
-function incomeBreakdown(month){
+function incomeBreakdown(month, plain){
   let privateCollected=0, privateDue=0, batchCollected=0, batchDue=0, madrasaStuCollected=0, madrasaStuDue=0;
   feeTrackedStudents().filter(s=>s.monthlyFee>0 && !s.isGroup).forEach(s=>{
     const f = feeStatusFor(s,month);
@@ -5167,9 +5271,20 @@ function incomeBreakdown(month){
     else { privateCollected+=f.paid; privateDue+=f.due; }
   });
   const salary = Number(DB.settings.monthlySalary)||0;
-  const collected = privateCollected + batchCollected + madrasaStuCollected, due = privateDue + batchDue + madrasaStuDue;
-  return {salary, privateCollected, privateDue, batchCollected, batchDue, madrasaStuCollected, madrasaStuDue, collected, due,
-    low: round2(salary + collected), high: round2(salary + collected + due)};
+  // Madrasa students' fees belong to the madrasa and your salary already pays you for that work, so they are
+  // NOT counted as your income unless you switch it on (Reports → Month → Income).
+  const countMad = DB.settings.countMadrasaFees===true;
+  const collected = privateCollected + batchCollected + (countMad ? madrasaStuCollected : 0);
+  const due = privateDue + batchDue + (countMad ? madrasaStuDue : 0);
+  const out = {salary, privateCollected, privateDue, batchCollected, batchDue, madrasaStuCollected, madrasaStuDue, collected, due, countMad,
+    low: round2(salary + collected), high: round2(salary + collected + due), likely:null, likelyRate:null, likelyMonths:0};
+  if(!plain && due>0){
+    // "Likely": what share of the fees owed did you really collect in each of the previous 3 months?
+    let c=0, e=0, n=0;
+    for(let k=1;k<=3;k++){ const p = incomeBreakdown(shiftMonth(month,-k), true), exp = p.collected + p.due; if(exp>0){ c+=p.collected; e+=exp; n++; } }
+    if(n>0){ out.likelyRate = c/e; out.likelyMonths = n; out.likely = round2(salary + collected + due*(c/e)); }
+  }
+  return out;
 }
 
 // Hours taught vs monthly fee, over the last 30 days. Time comes from the Session Log (every teaching block is
@@ -5231,7 +5346,7 @@ function reportsMonthTab(month){
   const row = (a,b,strong)=>`<div class="two-col-item"><span>${a}</span><b${strong?' style="color:var(--amber-soft);"':''}>${b}</b></div>`;
   const teachingRows = [
     ['Private', inc.privateCollected, inc.privateDue], ['Batch / groups', inc.batchCollected, inc.batchDue],
-    ...((inc.madrasaStuCollected>0||inc.madrasaStuDue>0) ? [['Madrasa students\' fees', inc.madrasaStuCollected, inc.madrasaStuDue]] : [])];
+    ...((inc.madrasaStuCollected>0||inc.madrasaStuDue>0) ? [[inc.countMad ? 'Madrasa students\' fees' : 'Madrasa students\' fees (not counted)', inc.madrasaStuCollected, inc.madrasaStuDue, !inc.countMad]] : [])];
   return `
   <div class="card">
     <div class="card-title">${monthLabel(month)} at a glance</div>
@@ -5247,13 +5362,15 @@ function reportsMonthTab(month){
     ` : `<div class="page-sub">Set your monthly salary in Settings to see it here.</div>`}
     <div class="sub-heading">From teaching — depends on effort</div>
     <div class="row" style="font-size:12px;color:var(--ink-faint);"><span></span><span style="display:flex;gap:18px;"><span>Collected</span><span>Still due</span></span></div>
-    ${teachingRows.map(([n,c,d])=>`<div class="two-col-item"><span>${n}</span><span style="display:flex;gap:18px;"><b>${fmtMoney(c)}</b><b style="${d>0?'color:var(--err);':''}">${fmtMoney(d)}</b></span></div>`).join('')}
+    ${teachingRows.map(([n,c,d,dim])=>`<div class="two-col-item" style="${dim?'opacity:.55;':''}"><span>${n}</span><span style="display:flex;gap:18px;"><b>${fmtMoney(c)}</b><b style="${d>0?'color:var(--err);':''}">${fmtMoney(d)}</b></span></div>`).join('')}
     ${row('Teaching total', `${fmtMoney(inc.collected)} · ${fmtMoney(inc.due)} due`)}
+    ${DB.students.some(s=>s.type==='madrasa' && !s.isGroup) ? `<label class="hint" style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;"><input type="checkbox" data-count-madrasa ${inc.countMad?'checked':''} style="width:auto;margin-top:2px;"><span>Count madrasa students' fees as my income. Leave this off if those fees belong to the madrasa: your salary already pays you for that work.</span></label>` : ''}
     <div class="divider"></div>
     <div class="sub-heading" style="margin-top:0;">Your income range this month</div>
     ${row('Low — salary + what is already collected', fmtMoney(inc.low))}
-    ${row('High — if everyone who owes pays', fmtMoney(inc.high), true)}
-    ${inc.salary>0 && inc.high>0 ? `<div class="page-sub" style="margin:4px 0 0;">The fixed salary covers ${Math.round(inc.salary/inc.high*100)}% of the high end. Reference only — nothing here is deducted automatically.</div>` : ''}
+    ${inc.likely!==null ? row(`Likely — at your usual collection rate (${Math.round(inc.likelyRate*100)}%, last ${inc.likelyMonths} month${inc.likelyMonths===1?'':'s'})`, fmtMoney(inc.likely)) : ''}
+    ${row('Best case — only if everyone who owes pays in full', fmtMoney(inc.high), true)}
+    ${inc.salary>0 && inc.high>0 ? `<div class="page-sub" style="margin:4px 0 0;">The fixed salary covers ${Math.round(inc.salary/inc.high*100)}% of the best case. Reference only — nothing here is deducted automatically.</div>` : ''}
   </div>
 
   <div class="card" data-offdays-card>
@@ -5351,6 +5468,7 @@ function bindReports(){
   const view = document.getElementById('view');
   view.querySelectorAll('[data-rtab]').forEach(el=>el.addEventListener('click',()=>{ reportsTab = el.dataset.rtab; render(); window.scrollTo(0,0); }));
   view.querySelectorAll('[data-rfilter]').forEach(el=>el.addEventListener('click',()=>{ reportsStudentFilter = el.dataset.rfilter; render(); }));
+  view.querySelectorAll('[data-count-madrasa]').forEach(el=>el.addEventListener('change',()=>{ DB.settings.countMadrasaFees = el.checked; saveDB(); render(); }));
   const search = view.querySelector('#rSearch'); if(search) search.addEventListener('input',()=>{ reportsSearch = search.value; applyReportsFilter(); });
   applyReportsFilter();
   view.querySelectorAll('[data-open-student]').forEach(el=>el.addEventListener('click',()=>navigate('studentDetail',{id:el.dataset.openStudent})));

@@ -385,7 +385,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-10-28.3-budgets-notes-income';
+const APP_BUILD = '2026-11-01.1-sync-tombstones';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -413,6 +413,7 @@ function uid(prefix){
 function defaultDB(){
   return {
     version:2,
+    deleted:[],
     settings:{
       teacherName:'Md. Asif Khan',
       brand:'Asif National',
@@ -504,6 +505,8 @@ const SYNC_COLLS=['students','classRecords','homework','attendance','exams','bat
 const SYNC_NATURAL={attendance:1,fees:1,offDays:1,sessionLogs:1,schedule:1}; // same logical record can be created on two devices with different ids
 const SYNC_LOCAL_SETTINGS=['sheetsWebAppUrl','sheetsAutoBackup','lastSheetsBackupAt','lastManualBackupAt','backupPin','theme','onboarded','syncOn','syncToken'];
 const SyncUI={state:'idle',msg:'',attempted:false};
+let syncSeenRef=null, syncSeenKeys=null;          // for tombstone tracking (which record keys existed at the last save)
+const SYNC_DEL_MAX_AGE=90*24*3600*1000;            // tombstones are kept 90 days, then dropped
 // Until the first sync attempt has finished, don't auto-create session logs from a factory schedule that is about to be replaced.
 function syncWaitingFirstSync(){ try{ return syncEnabled() && !syncLoadState().base && !SyncUI.attempted; }catch(e){ return false; } }
 let syncBusy=false, syncAgain=false, syncTimer=null, syncRetryTimer=null;
@@ -565,6 +568,82 @@ function syncMap(p){
 function syncSameMap(a,b){ return syncStable(a||{})===syncStable(b||{}); }
 function syncCount(p){ let n=0; SYNC_COLLS.forEach(c=>{ if(c!=='schedule'&&c!=='subjects'&&Array.isArray(p[c])) n+=p[c].length; }); return n; }
 
+
+/* ---- tombstones: a durable \"this record was deleted\" note, so a deletion survives an import/restore/new device (no base) ---- */
+function syncKeysNow(){
+  const o={};
+  SYNC_COLLS.forEach(c=>{ const a=DB[c], m=o[c]={}; if(Array.isArray(a)) a.forEach(it=>{ m[syncKey(c,it)]=1; }); });
+  return o;
+}
+function syncPruneDeleted(list){
+  const cutoff=Date.now()-SYNC_DEL_MAX_AGE;
+  return (Array.isArray(list)?list:[]).filter(d=>d && d.c && d.k!==undefined && (Number(d.at)||0)>=cutoff).slice(-3000);
+}
+// Called from every saveDB(): any record key that was present at the previous save and is gone now = deleted by the user.
+function syncTrackDeletes(){
+  if(DEMO_MODE) return;
+  if(syncSeenRef!==DB || !syncSeenKeys){ syncSeenRef=DB; syncSeenKeys=syncKeysNow(); return; }   // DB was replaced wholesale (import/restore/reset): that is not a user deletion
+  const now=Date.now(), cur=syncKeysNow();
+  if(!Array.isArray(DB.deleted)) DB.deleted=[];
+  const have={}; DB.deleted.forEach(d=>{ if(d) have[d.c+'\u0001'+d.k]=d; });
+  SYNC_COLLS.forEach(c=>{
+    const prev=syncSeenKeys[c]||{}, now_=cur[c]||{};
+    Object.keys(prev).forEach(k=>{
+      if(now_[k]) return;
+      const id=c+'\u0001'+k;
+      if(have[id]) have[id].at=now; else { const d={c:c,k:k,at:now}; DB.deleted.push(d); have[id]=d; }
+    });
+  });
+  DB.deleted=syncPruneDeleted(DB.deleted);
+  syncSeenKeys=cur;
+}
+function syncTombMap(list){
+  const m={}; (Array.isArray(list)?list:[]).forEach(d=>{ if(d && d.c && d.k!==undefined) m[d.c+'\u0001'+d.k]=Math.max(m[d.c+'\u0001'+d.k]||0,Number(d.at)||0); });
+  return m;
+}
+/* ---- structured 3-way merge for object/array settings (expense categories, income sources, carry-over ...) ----
+   b = last synced value (undefined if unknown). Without b nothing can be deleted: union, local wins on a true clash. */
+function syncItemKey(x){
+  if(x && typeof x==='object') return x.id!==undefined ? 'i'+x.id : (x.n!==undefined ? 'n'+x.n : 'j'+syncStable(x));
+  return 's'+String(x);
+}
+function syncMergeVal(l,r,b){
+  const same=(a,c)=>syncStable(a)===syncStable(c);
+  const clone=v=>v===undefined?undefined:JSON.parse(JSON.stringify(v));
+  if(same(l,r)) return {v:clone(l),conflict:false};
+  if(b!==undefined){ if(same(l,b)) return {v:clone(r),conflict:false}; if(same(r,b)) return {v:clone(l),conflict:false}; }
+  const isObj=v=>v && typeof v==='object' && !Array.isArray(v);
+  let conflict=false;
+  if(isObj(l)&&isObj(r)){
+    const bo=isObj(b)?b:undefined, out={};
+    const keys=Object.keys(l); Object.keys(r).forEach(k=>{ if(keys.indexOf(k)<0) keys.push(k); });
+    keys.forEach(k=>{
+      const inL=(k in l), inR=(k in r), inB=bo&&(k in bo);
+      if(inL&&!inR){ if(inB && same(l[k],bo[k])) return; out[k]=clone(l[k]); return; }       // deleted on the other device, untouched here -> gone
+      if(inR&&!inL){ if(inB && same(r[k],bo[k])) return; out[k]=clone(r[k]); return; }       // deleted here, untouched there -> stays gone
+      const m=syncMergeVal(l[k],r[k],inB?bo[k]:undefined); out[k]=m.v; if(m.conflict) conflict=true;
+    });
+    return {v:out,conflict};
+  }
+  if(Array.isArray(l)&&Array.isArray(r)){
+    const ba=Array.isArray(b)?b:undefined, bm=new Map(), lm=new Map(), rm=new Map(), out=[];
+    if(ba) ba.forEach(x=>bm.set(syncItemKey(x),x));
+    l.forEach(x=>lm.set(syncItemKey(x),x)); r.forEach(x=>rm.set(syncItemKey(x),x));
+    l.forEach(x=>{
+      const k=syncItemKey(x);
+      if(!rm.has(k)){ if(ba && bm.has(k) && same(x,bm.get(k))) return; out.push(clone(x)); return; }
+      const m=syncMergeVal(x,rm.get(k),bm.has(k)?bm.get(k):undefined); out.push(m.v); if(m.conflict) conflict=true;
+    });
+    r.forEach(x=>{
+      const k=syncItemKey(x); if(lm.has(k)) return;
+      if(ba && bm.has(k) && same(x,bm.get(k))) return;
+      out.push(clone(x));
+    });
+    return {v:out,conflict};
+  }
+  return {v:clone(l),conflict:true};   // plain values changed on both sides: local wins, logged
+}
+
 // Pure 3-way merge. L = local payload, R = remote payload, base = {c:{coll:{key:hash}},s:{key:hash}} or null.
 function syncMerge(L,R,base){
   base=base||{c:{},s:{}};
@@ -577,6 +656,7 @@ function syncMerge(L,R,base){
     const sig=arr=>arr.map(x=>syncHash(c,x)).sort().join(',');
     return sig(la)===sig(dfltDB[c]);
   };
+  const tl=syncTombMap(L.deleted), trm=syncTombMap(R.deleted);
   const dropGhostLogs=pristineFirst('schedule');   // logs auto-made from a factory schedule that is about to be replaced
   SYNC_COLLS.forEach(c=>{
     const la=Array.isArray(L[c])?L[c]:[], ra=Array.isArray(R[c])?R[c]:[], bm=(base.c&&base.c[c])||{};
@@ -589,7 +669,12 @@ function syncMerge(L,R,base){
     la.forEach(it=>{
       const k=syncKey(c,it), hl=syncHash(c,it), hb=bm[k], r=rm.get(k);
       if(r===undefined){
-        if(hb===undefined){ if(dropGhostLogs && c==='sessionLogs' && it && it.autoFilled===true){ stats.removed++; } else res.push(it); }   // new on this device (except ghost auto-logs)
+        if(hb===undefined){
+          const tt=trm[c+'\u0001'+k];
+          if(dropGhostLogs && c==='sessionLogs' && it && it.autoFilled===true){ stats.removed++; }
+          else if(tt!==undefined && !((Number(it&&it._u)||0)>tt)){ stats.removed++; }   // the other device deleted it (tombstone) and it was not edited since
+          else res.push(it);                                                            // genuinely new on this device
+        }
         else if(hl===hb) stats.removed++;                        // deleted on the other device, untouched here
         else { res.push(it); stats.keptEdit++; }                 // edited here, deleted there -> keep the edit
       } else {
@@ -608,7 +693,11 @@ function syncMerge(L,R,base){
     ra.forEach(r=>{
       const k=syncKey(c,r); if(lm.has(k)) return;
       const hb=bm[k], hr=syncHash(c,r);
-      if(hb===undefined){ res.push(r); stats.added++; }                          // new on the other device
+      if(hb===undefined){
+        const tt=tl[c+'\u0001'+k];
+        if(tt!==undefined && !((Number(r&&r._u)||0)>tt)){ /* deleted here (tombstone), not edited there since -> stays deleted */ }
+        else { res.push(r); stats.added++; }                                       // new on the other device
+      }
       else if(hr===hb){ /* deleted here, untouched there -> stays deleted */ }
       else { res.push(r); stats.keptEdit++; }                                    // deleted here, edited there -> keep the edit
     });
@@ -623,16 +712,31 @@ function syncMerge(L,R,base){
     if(hl===hr) return;
     if(hb!==undefined && hl===hb) ms[k]=rs[k];                                   // only the other device changed it
     else if(hb===undefined && dflt && (k in dflt) && hl===syncHash(null,dflt[k])) ms[k]=rs[k];   // no history yet and this device still has the factory default -> take the cloud value
-    else if(hb===undefined || hr!==hb) conflicts.push({coll:'settings',key:k,kept:'local',lost:rs[k]});
+    else if(hb===undefined || hr!==hb){
+      const bv=(hb!==undefined && base.sv && (k in base.sv))?base.sv[k]:undefined;
+      const mv=syncMergeVal(ls[k],rs[k],bv);
+      ms[k]=mv.v;
+      if(mv.conflict) conflicts.push({coll:'settings',key:k,kept:'local',lost:rs[k]});
+    }
   });
   out.settings=ms;
+  // tombstones: union (newest wins), minus anything the merge kept alive, minus old ones
+  const dm={}; [tl,trm].forEach(m=>Object.keys(m).forEach(id=>{ dm[id]=Math.max(dm[id]||0,m[id]); }));
+  const dl=[];
+  Object.keys(dm).forEach(id=>{
+    const p=id.split('\u0001'), c=p[0], k=p.slice(1).join('\u0001'), arr=out[c];
+    if(Array.isArray(arr) && arr.some(it=>syncKey(c,it)===k)) return;
+    dl.push({c:c,k:k,at:dm[id]});
+  });
+  out.deleted=syncPruneDeleted(dl);
   return {out,stats,conflicts};
 }
 
 /* ---- state, UI, helpers ---- */
 function syncLoadState(){ try{ return JSON.parse(localStorage.getItem(SYNC_STATE_KEY))||{}; }catch(e){ return {}; } }
 function syncSaveState(s){ try{ localStorage.setItem(SYNC_STATE_KEY,JSON.stringify(s)); }catch(e){ console.warn('sync state save failed',e); } }
-function syncResetBase(){ const S=syncLoadState(); delete S.base; delete S.rev; syncSaveState(S); } // next sync = pull + union-merge, never deletes anything
+function syncResetBase(){ const S=syncLoadState(); delete S.base; delete S.rev; delete S.sv; syncSaveState(S); }
+function syncSetBase(S,payload,rev){ S.base=syncMap(payload); S.sv=JSON.parse(JSON.stringify(payload.settings||{})); S.rev=rev; } // next sync = pull + union-merge, never deletes anything
 function syncDeviceId(){ try{ let d=localStorage.getItem(SYNC_DEV_KEY); if(!d){ d=uid('dev'); localStorage.setItem(SYNC_DEV_KEY,d); } return d; }catch(e){ return 'dev_unknown'; } }
 function syncEnabled(){
   if(DEMO_MODE) return false;
@@ -673,12 +777,19 @@ function syncURL(act){
   const st=DB.settings, u=st.sheetsWebAppUrl;
   return u+(u.indexOf('?')<0?'?':'&')+'action='+act+(st.syncToken?'&token='+encodeURIComponent(st.syncToken):'')+'&_='+Date.now();
 }
-async function syncReq(url,opts){
+async function syncReq(url,opts,timeoutMs){
   const ctl=(typeof AbortController!=='undefined')?new AbortController():null;
-  const t=setTimeout(()=>{ if(ctl) ctl.abort(); },25000);
+  const t=setTimeout(()=>{ if(ctl) ctl.abort(); },timeoutMs||25000);
   try{
     const res=await fetch(url,Object.assign(ctl?{signal:ctl.signal}:{},opts||{}));
-    return await res.json();
+    const txt=await res.text();
+    try{ return JSON.parse(txt); }
+    catch(e){
+      const er=new Error(/^\s*</.test(txt)
+        ? 'The script URL returned a web page instead of data. In Apps Script: Deploy → Manage deployments → Edit → Version: New version, Execute as: Me, Who has access: Anyone — and paste the link ending in /exec.'
+        : 'The sync script sent an unreadable reply (HTTP '+res.status+').');
+      er.readable=true; throw er;
+    }
   } finally { clearTimeout(t); }
 }
 function syncLogConflicts(list){
@@ -708,14 +819,14 @@ async function syncNow(reason){
       if(S.base && meta.rev===S.rev && !dirty){ done=true; break; }
       let remote=null, remoteRev=meta.rev;
       if(meta.rev>0 && (meta.rev!==S.rev || !S.base)){
-        const r=await syncReq(syncURL('restore'));
+        const r=await syncReq(syncURL('restore'),null,60000);
         if(!r || !r.ok) throw new Error((r&&r.error)||'Could not download the backup');
         if(!r.data || !Array.isArray(r.data.students)) throw new Error('Cloud copy looks corrupted — sync stopped, nothing changed');
         remote=r.data; remoteRev=(r.rev!==undefined?r.rev:meta.rev);
       }
       if(reason!=='manual' && syncUserBusy()){ syncRetryLater(); return; }  // user started typing while we were fetching: apply later
       if(remote){
-        const res=syncMerge(syncPayload(),remote,S.base);
+        const res=syncMerge(syncPayload(),remote,S.base?Object.assign({},S.base,{sv:S.sv}):S.base);
         const rc=syncCount(remote);
         if(rc>=10 && syncCount(res.out)<rc*0.5) throw new Error('Sync stopped: this would delete more than half of your records. Nothing was changed. Use Import/Restore if this is really intended.');
         const changed=!syncSameMap(syncMap(syncPayload()),syncMap(res.out));
@@ -723,22 +834,30 @@ async function syncNow(reason){
           try{ localStorage.setItem(SYNC_PRE_KEY,JSON.stringify({at:new Date().toISOString(),db:DB})); }
           catch(e){ throw new Error('Not enough storage to safely merge — sync stopped, nothing changed'); }
           Object.keys(res.out).forEach(k=>{ if(k==='settings') Object.assign(DB.settings,res.out.settings); else DB[k]=res.out[k]; }); // settings: only shared keys are overwritten, this device's own URL/token/theme stay
+          syncSeenRef=DB; syncSeenKeys=syncKeysNow();   // records removed by the merge are not user deletions
           if((DB.students||[]).length) DB.settings.onboarded=true;
           if(!syncPersistLocal()) throw new Error('Could not save merged data on this device');
           syncLogConflicts(res.conflicts);
           if(!(ROUTE.page==='today' && todayEditMode)) { try{ render(); }catch(e){ console.warn(e); } }
-        } else syncLogConflicts(res.conflicts);
+        } else { syncLogConflicts(res.conflicts); DB.deleted=res.out.deleted; }
       }
       const payload=syncPayload(), pushedMap=syncMap(payload);
       if(remote && syncSameMap(pushedMap,syncMap(remote))){        // already identical to the cloud
-        S.base=pushedMap; S.rev=remoteRev; done=true; break;
+        syncSetBase(S,payload,remoteRev); done=true; break;
       }
       if(!remote && isDbEmpty()){ done=true; break; }                // nothing worth pushing
-      const resp=await syncReq(syncURL('x').replace(/action=x/,'action=sync'),{
-        method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-        body:JSON.stringify({action:'sync',baseRev:remoteRev,deviceId:syncDeviceId(),token:DB.settings.syncToken||'',data:payload})
-      });
-      if(resp && resp.ok){ S.base=pushedMap; S.rev=resp.rev; done=true; break; }
+      let resp;
+      try{
+        resp=await syncReq(syncURL('x').replace(/action=x/,'action=sync'),{
+          method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+          body:JSON.stringify({action:'sync',baseRev:remoteRev,deviceId:syncDeviceId(),token:DB.settings.syncToken||'',readable:(reason==='manual'),data:payload})
+        },60000);
+      }catch(pe){
+        // Timed out: the script may still have saved it. Re-check the cloud instead of assuming failure.
+        if(pe && pe.name==='AbortError'){ continue; }
+        throw pe;
+      }
+      if(resp && resp.ok){ syncSetBase(S,payload,resp.rev); done=true; break; }
       if(resp && resp.conflict){ continue; }                        // someone pushed in between: pull + merge again
       throw new Error((resp&&resp.error)||'Push failed');
     }
@@ -751,11 +870,87 @@ async function syncNow(reason){
     if(!syncSameMap(syncMap(syncPayload()),S.base)) syncAgain=true;  // edits made while we were syncing
   }catch(err){
     console.warn('Sync failed:',err);
-    const offline=(typeof navigator!=='undefined' && navigator.onLine===false) || (err && (err.name==='TypeError' || err.name==='AbortError'));
-    if(offline) syncSet('offline'); else syncSet('error',String(err&&err.message||err));
+    const deviceOffline=(typeof navigator!=='undefined' && navigator.onLine===false);
+    const unreachable=!!(err && !err.readable && (err.name==='TypeError' || err.name==='AbortError'));
+    if(deviceOffline) syncSet('offline');
+    else if(unreachable) syncSet('error',(err.name==='AbortError'?'The sync script did not answer within 60 seconds.':'Could not reach the sync script.')+' Check that the URL is the link ending in /exec and that it is deployed for "Anyone". Your data is safe on this device; it will retry.');
+    else syncSet('error',String(err&&err.message||err));
   }finally{
     syncBusy=false; SyncUI.attempted=true;
     if(syncAgain){ syncAgain=false; syncSchedule(2000); }
+  }
+}
+
+/* ---- "this device is the truth": replace the cloud with this device's data (used after an import, or from Settings) ---- */
+function syncDownloadText(name,text){
+  try{ const blob=new Blob([text],{type:'application/json'}), a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }catch(e){}
+}
+async function syncReplaceCloud(){
+  if(DEMO_MODE) return false;
+  if(!DB.settings.sheetsWebAppUrl){ alert('Add your Apps Script Web App URL in Settings first.'); return false; }
+  if(isDbEmpty()){ alert('This device has no data, so it cannot replace the cloud.'); return false; }
+  try{
+    toast('Checking the cloud…');
+    syncStamp();
+    const meta=await syncReq(syncURL('meta'));
+    if(!meta || !meta.ok) throw new Error((meta&&meta.error)||'Could not reach the sync endpoint');
+    let remote=null;
+    if(meta.rev>0){
+      const r=await syncReq(syncURL('restore'),null,60000);
+      if(r && r.ok && r.data && Array.isArray(r.data.students)) remote=r.data;
+    }
+    const mine=syncPayload();
+    let removedTxt='', onlyHere=0, onlyCloud=0;
+    if(remote){
+      const parts=[];
+      SYNC_COLLS.forEach(c=>{
+        if(c==='schedule'||c==='subjects'||c==='sessionLogs'||c==='budgetPlans') return;
+        const lk={}, rk={}; (mine[c]||[]).forEach(it=>{ lk[syncKey(c,it)]=1; }); (remote[c]||[]).forEach(it=>{ rk[syncKey(c,it)]=1; });
+        const gone=Object.keys(rk).filter(k=>!lk[k]).length, add=Object.keys(lk).filter(k=>!rk[k]).length;
+        onlyCloud+=gone; onlyHere+=add; if(gone) parts.push(c+' '+gone);
+      });
+      removedTxt=parts.join(', ');
+      // always keep the old cloud copy as a file on this device before replacing it
+      syncDownloadText('teacher-planner-cloud-before-replace-'+todayISO()+'.json',JSON.stringify(remote));
+    }
+    const msg='Make THIS device the truth for ALL devices?\n\nThe cloud will be replaced with the data on this device.'
+      +(remote?'\n\n• '+onlyCloud+' record(s) that are in the cloud now are NOT on this device and will disappear from every device'+(removedTxt?' ('+removedTxt+')':'')+'.\n• '+onlyHere+' record(s) exist only on this device and will be added.\n\nA copy of the current cloud data was just downloaded as a file, and the sheet keeps a "Backup previous" tab.':'')
+      +'\n\nLive sync will be switched ON for this device. Continue?';
+    if(!confirm(msg)) return false;
+    for(let i=0;i<3;i++){
+      const m=await syncReq(syncURL('meta'));
+      if(!m || !m.ok) throw new Error((m&&m.error)||'Could not reach the sync endpoint');
+      const payload=syncPayload();
+      const resp=await syncReq(syncURL('x').replace(/action=x/,'action=sync'),{
+        method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({action:'sync',force:true,baseRev:m.rev,deviceId:syncDeviceId(),token:DB.settings.syncToken||'',data:payload})
+      },60000);
+      if(resp && resp.ok){
+        const S=syncLoadState(); syncSetBase(S,payload,resp.rev); S.lastOk=new Date().toISOString(); syncSaveState(S);
+        DB.settings.syncOn=true; DB.settings.lastSheetsBackupAt=S.lastOk; syncPersistLocal();
+        syncSet('idle'); if(ROUTE.page==='settings') render();
+        toast('Cloud now matches this device ✓');
+        return true;
+      }
+      if(resp && resp.conflict) continue;
+      throw new Error((resp&&resp.error)||'Replace failed');
+    }
+    throw new Error('Cloud kept changing — try again');
+  }catch(err){
+    alert('Could not replace the cloud: '+(err&&err.message||err)+'\n\nNothing was changed in the cloud.');
+    return false;
+  }
+}
+function syncAfterImport(){
+  if(!DB.settings.sheetsWebAppUrl || DEMO_MODE) return;
+  if(confirm('Backup loaded on this device.\n\nOK = also make it the truth for ALL devices (the cloud is replaced; you will see exactly what disappears before anything happens).\nCancel = keep it on this device only; Live sync stays OFF.')){
+    const was=window.__autoWas;
+    syncReplaceCloud().then(ok=>{
+      if(ok){ if(was!==undefined) DB.settings.sheetsAutoBackup=was; syncPersistLocal(); }
+      else toast('Cloud not changed — Live sync and auto-backup stay OFF on this device');
+    });
+  } else {
+    DB.settings.syncOn=false; DB.settings.sheetsAutoBackup=false; syncPersistLocal(); toast('Kept on this device only — sync and auto-backup are OFF');
   }
 }
 function syncUndoLast(){
@@ -786,6 +981,7 @@ function syncInit(){
 }
 
 let DB = loadDB();
+try{ syncSeenRef=DB; syncSeenKeys=syncKeysNow(); }catch(e){}
 
 // Shared merge so a fresh load AND a manual "Import Backup" both survive schema
 // additions the same way — new fields fall back to defaults, nothing is dropped.
@@ -808,6 +1004,7 @@ function mergeIntoDefaults(parsed){
       if(match) blk.studentId = match.id;
     }
   });
+  if(!Array.isArray(merged.deleted)) merged.deleted = []; // backups from before sync tombstones
   if(!Array.isArray(merged.expenses)) merged.expenses = []; // backups from before the Money section
   if(!Array.isArray(merged.batchExams)) merged.batchExams = []; // backups from before batch exams
   ['incomes','loans','savingPots','savingTx'].forEach(k=>{ if(!Array.isArray(merged[k])) merged[k] = []; }); // backups from before Money v2
@@ -848,6 +1045,7 @@ function loadDB(){
   }
 }
 function saveDB(){
+  try{ syncTrackDeletes(); }catch(e){ /* never block a save */ }
   try{ syncStamp(); }catch(e){ /* sync bookkeeping must never block a save */ }
   try{
     localStorage.setItem(DB_KEY, JSON.stringify(DB));
@@ -1175,7 +1373,11 @@ async function pushToSheets(silent){
     console.warn('Sheets backup failed (will retry on next change):', err);
     if(err && err.refused){
       // The sheet deliberately said no (e.g. it would overwrite real data with an empty backup). Say so — even for auto-backups, once.
-      if(!silent || !sheetsRefusalShown){ sheetsRefusalShown = true; toast('⚠ Backup refused: ' + escapeHTML(err.message)); }
+      if(!silent || !sheetsRefusalShown){
+        sheetsRefusalShown = true;
+        const liveOn = /Live sync is on/i.test(err.message||'');
+        toast(liveOn ? '⚠ Cloud is in Live-sync mode, Live sync is OFF here. Settings → tick Live sync → Save. Reload will not fix this.' : '⚠ Backup refused: ' + escapeHTML(err.message));
+      }
     } else if(!silent) toast('⚠ Sheet backup failed — check the URL and your connection');
   }
 }
@@ -1186,8 +1388,7 @@ async function restoreFromSheets(skipConfirm){
   if(!url){ alert('Add your Apps Script Web App URL in Settings first.'); return; }
   try{
     toast('Fetching backup…');
-    const res = await fetch(`${url}?action=restore${DB.settings.syncToken?'&token='+encodeURIComponent(DB.settings.syncToken):''}`);
-    const json = await res.json();
+    const json = await syncReq(`${url}${url.indexOf('?')<0?'?':'&'}action=restore${DB.settings.syncToken?'&token='+encodeURIComponent(DB.settings.syncToken):''}&_=${Date.now()}`,null,60000);
     if(!json.ok) throw new Error(json.error||'Restore failed');
     const parsed = json.data;
     if(!parsed || !Array.isArray(parsed.students)) throw new Error('Backup on the sheet looks corrupted or empty');
@@ -1198,6 +1399,7 @@ async function restoreFromSheets(skipConfirm){
     DB.settings.onboarded = true;
     DB_KEY = REAL_DB_KEY; DEMO_MODE = false; // restoring is always a real-account action
     syncResetBase();
+    if(json.rev!==undefined){ const S=syncLoadState(); syncSetBase(S,syncPayload(),json.rev); syncSaveState(S); }   // this device now equals the cloud at that revision: later syncs are true 3-way merges, deletions included
     saveDB();
     navigate('dashboard');
     toast('Restored from Google Sheet');
@@ -3417,9 +3619,12 @@ function bindFirstRun(){
       }catch(err){ alert('Import failed: ' + err.message); return; }
       if(url) DB.settings.sheetsWebAppUrl = url;
       DB.settings.onboarded = true;
+      DB.settings.syncOn = false;
+      window.__autoWas = DB.settings.sheetsAutoBackup; if(DB.settings.sheetsWebAppUrl) DB.settings.sheetsAutoBackup = false;
       saveDB();
       navigate('dashboard');
       toast('Account set up');
+      if(DB.settings.sheetsWebAppUrl) setTimeout(syncAfterImport,300);
     } else {
       DB.settings.sheetsWebAppUrl = url; // restoreFromSheets reads this, and handles onboarded/save/navigate itself on success
       await restoreFromSheets(true);
@@ -5567,6 +5772,8 @@ function renderSettings(){
       <button class="btn block" id="syncUndoBtn">Undo last sync</button>
       <button class="btn block" id="syncConflictsBtn">Conflict log</button>
     </div>
+    <button class="btn block" id="syncReplaceCloudBtn" style="margin-top:10px;">Replace cloud with this device</button>
+    <div class="hint" style="margin-top:6px;">Use this on the device whose data is right (for example after importing a backup). It shows what will disappear before it does anything.</div>
     <div class="hint" style="margin-top:10px;">One-time setup: create a Google Sheet, Extensions → Apps Script, paste the provided Code.gs, Deploy → Web App → Anyone with the link → copy the URL here. Only pushes automatically — restoring back always needs an explicit tap on "Restore From Sheet" plus a confirm, so nothing overwrites your data by accident.</div>
   </div>
   `}
@@ -5632,6 +5839,8 @@ function bindSettings(){
   });
   const sheetsBackupNowBtn = document.getElementById('sheetsBackupNowBtn');
   if(sheetsBackupNowBtn) sheetsBackupNowBtn.addEventListener('click', ()=>{ if(syncEnabled()) syncNow('manual'); else pushToSheets(false); });
+  const syncReplaceCloudBtn = document.getElementById('syncReplaceCloudBtn');
+  if(syncReplaceCloudBtn) syncReplaceCloudBtn.addEventListener('click', ()=>syncReplaceCloud());
   const syncUndoBtn = document.getElementById('syncUndoBtn');
   if(syncUndoBtn) syncUndoBtn.addEventListener('click', syncUndoLast);
   const syncConflictsBtn = document.getElementById('syncConflictsBtn');
@@ -5657,10 +5866,13 @@ function importBackup(e){
       const keepLocal = {}; SYNC_LOCAL_SETTINGS.forEach(k=>{ if(DB.settings && DB.settings[k]!==undefined) keepLocal[k]=DB.settings[k]; });
       DB = mergeIntoDefaults(parsed); // same merge path as normal load — new fields fall back to defaults, nothing dropped
       Object.assign(DB.settings, keepLocal);
-      syncResetBase(); // after an import, the next sync merges with the cloud instead of deleting things there
+      syncResetBase();
+      DB.settings.syncOn = false;   // hold sync until the person decides what this file means for the cloud (otherwise it would be union-merged back in)
+      window.__autoWas = DB.settings.sheetsAutoBackup; if(DB.settings.sheetsWebAppUrl) DB.settings.sheetsAutoBackup = false;
       saveDB();
       navigate('dashboard');
       toast('Backup restored');
+      if(DB.settings.sheetsWebAppUrl) setTimeout(syncAfterImport,300);
     }catch(err){
       alert('Import failed: ' + err.message);
     }

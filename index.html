@@ -385,7 +385,7 @@ main{padding:16px;max-width:560px;margin:0 auto;}
 const TZ = 'Asia/Dhaka';
 // Bumped on every shipped update — check Settings against this to confirm
 // you're actually running the latest file, not a stale cached/undeployed one.
-const APP_BUILD = '2026-11-01.1-sync-tombstones';
+const APP_BUILD = '2026-11-01.2-sheet-is-truth';
 const REAL_DB_KEY = 'tp_db_v1';
 const DEMO_DB_KEY = 'tp_demo_v1'; // completely separate store — demo data never touches the real key, in either direction
 let DB_KEY = REAL_DB_KEY; // mutable: points at whichever store is currently "live" — but starts, and normally stays, on the real key
@@ -413,7 +413,6 @@ function uid(prefix){
 function defaultDB(){
   return {
     version:2,
-    deleted:[],
     settings:{
       teacherName:'Md. Asif Khan',
       brand:'Asif National',
@@ -492,23 +491,26 @@ function defaultScheduleBlocks(){
 }
 
 /* =========================================================================
-   LIVE SYNC (phone <-> PC) via the same Apps Script Web App.
-   - 3-way merge per record (base = last synced state, local, remote), so a stale
-     device can never silently overwrite another device's work.
-   - Edit-vs-delete: the edit always wins (data is never dropped by a merge).
-   - Same-record edits on both devices: newer edit wins, loser saved to conflict log.
-   - A copy of local data is saved before every merge that changes it (tp_sync_pre_v1).
+   LIVE SYNC v2 — the Google Sheet is the ONE source of truth.
+   - Every device keeps a local copy only for speed/offline. It never "merges" two full copies.
+   - A device sends only what it changed (add/edit/delete of single records) and catches up from the sheet's
+     change log. A delete is a real delete on the sheet, so nothing can come back by itself.
+   - "shadow" = what this device last saw on the sheet. (local vs shadow) = this device's own unsent changes.
+   - Rules when the sheet changed the same thing this device changed: an edit always beats a delete;
+     two edits -> the one sent last wins and the other version is kept in the conflict log.
+   - Every request carries a batch id, so a retry after a timeout is never applied twice.
+   - Import / "Upload this device" replaces the sheet only after showing exactly what will disappear.
    - Nothing is applied while a modal/form is open; it waits.
    ========================================================================= */
-const SYNC_STATE_KEY='tp_sync_state_v1', SYNC_PRE_KEY='tp_sync_pre_v1', SYNC_CONFLICT_KEY='tp_sync_conflicts_v1', SYNC_INIT_KEY='tp_sync_init_v1', SYNC_DEV_KEY='tp_sync_dev_v1';
+const SYNC_STATE_KEY='tp_sync_state_v1', SYNC_PRE_KEY='tp_sync_pre_v1', SYNC_CONFLICT_KEY='tp_sync_conflicts_v1', SYNC_DEV_KEY='tp_sync_dev_v1';
 const SYNC_COLLS=['students','classRecords','homework','attendance','exams','batchExams','fees','tasks','expenses','incomes','loans','savingPots','savingTx','notes','syllabus','studyPlan','offDays','sessionLogs','schedule','subjects','budgetPlans'];
 const SYNC_NATURAL={attendance:1,fees:1,offDays:1,sessionLogs:1,schedule:1}; // same logical record can be created on two devices with different ids
 const SYNC_LOCAL_SETTINGS=['sheetsWebAppUrl','sheetsAutoBackup','lastSheetsBackupAt','lastManualBackupAt','backupPin','theme','onboarded','syncOn','syncToken'];
+const SYNC_NOT_SHARED_TOP=['settings','prayerTimes'];      // everything else at the top level that is not a collection syncs as a plain value (e.g. version)
+const SYNC_CHUNK=400;                                       // changes per request
 const SyncUI={state:'idle',msg:'',attempted:false};
-let syncSeenRef=null, syncSeenKeys=null;          // for tombstone tracking (which record keys existed at the last save)
-const SYNC_DEL_MAX_AGE=90*24*3600*1000;            // tombstones are kept 90 days, then dropped
 // Until the first sync attempt has finished, don't auto-create session logs from a factory schedule that is about to be replaced.
-function syncWaitingFirstSync(){ try{ return syncEnabled() && !syncLoadState().base && !SyncUI.attempted; }catch(e){ return false; } }
+function syncWaitingFirstSync(){ try{ return syncEnabled() && !syncLoadState().shadow && !SyncUI.attempted; }catch(e){ return false; } }
 let syncBusy=false, syncAgain=false, syncTimer=null, syncRetryTimer=null;
 
 function syncStable(v){
@@ -536,207 +538,140 @@ function syncKey(c,it){
   }
   return it.id!==undefined ? 'i|'+it.id : 'h|'+syncHash(c,it);
 }
-// Stamp every record with _h (content hash) and _u (time of last real change). Records that
-// existed before sync was introduced get _u=0 so they never "win" a conflict just by being stamped.
-function syncStamp(){
-  if(DEMO_MODE) return;
-  let first=false; try{ first=!localStorage.getItem(SYNC_INIT_KEY); }catch(e){}
-  const now=Date.now();
-  SYNC_COLLS.forEach(c=>{
-    const a=DB[c]; if(!Array.isArray(a)) return;
-    a.forEach(it=>{
-      if(!it||typeof it!=='object') return;
-      const h=syncHash(c,it);
-      if(it._h!==h){ it._u=(it._h===undefined && first)?0:now; it._h=h; }
-    });
-  });
-  if(first){ try{ localStorage.setItem(SYNC_INIT_KEY,'1'); }catch(e){} }
+// Keys for a whole collection. Two records that share a natural key (the real data has 15 identical attendance pairs)
+// get the record id appended, so neither is ever merged away or sent back and forth.
+function syncKeysOf(c,arr){
+  const base=arr.map(it=>syncKey(c,it)), cnt={};
+  base.forEach(k=>{ cnt[k]=(cnt[k]||0)+1; });
+  return base.map((k,i)=>cnt[k]>1 ? k+'#'+((arr[i]&&arr[i].id!==undefined)?arr[i].id:syncHash(c,arr[i])+i) : k);
 }
-function syncPayload(){
-  const o={};
-  Object.keys(DB).forEach(k=>{ if(k!=='prayerTimes') o[k]=DB[k]; });
-  o.settings={};
-  Object.keys(DB.settings||{}).forEach(k=>{ if(SYNC_LOCAL_SETTINGS.indexOf(k)<0) o.settings[k]=DB.settings[k]; });
-  return o;
-}
-function syncMap(p){
-  const m={c:{},s:{}};
-  SYNC_COLLS.forEach(c=>{ const mm=m.c[c]={}; (Array.isArray(p[c])?p[c]:[]).forEach(it=>{ mm[syncKey(c,it)]=syncHash(c,it); }); });
-  Object.keys(p.settings||{}).forEach(k=>{ if(SYNC_LOCAL_SETTINGS.indexOf(k)<0) m.s[k]=syncHash(null,p.settings[k]); });
+const syncClone=v=>v===undefined?undefined:JSON.parse(JSON.stringify(v));
+const syncClean=it=>{ if(!it||typeof it!=='object'||Array.isArray(it)) return syncClone(it); const o=syncClone(it); delete o._u; delete o._h; return o; };
+function syncSettingKeys(st){ return Object.keys(st||{}).filter(k=>SYNC_LOCAL_SETTINGS.indexOf(k)<0); }
+function syncXKeys(){ return Object.keys(DB).filter(k=>SYNC_COLLS.indexOf(k)<0 && SYNC_NOT_SHARED_TOP.indexOf(k)<0); }
+// hashes of everything this device holds that is shared
+function syncSnapshot(){
+  const m={c:{},s:{},x:{}};
+  SYNC_COLLS.forEach(c=>{ const mm=m.c[c]={}, arr=Array.isArray(DB[c])?DB[c]:[], ks=syncKeysOf(c,arr); arr.forEach((it,i)=>{ mm[ks[i]]=syncHash(c,it); }); });
+  syncSettingKeys(DB.settings).forEach(k=>{ m.s[k]=syncHash(null,DB.settings[k]); });
+  syncXKeys().forEach(k=>{ m.x[k]=syncHash(null,DB[k]); });
   return m;
 }
-function syncSameMap(a,b){ return syncStable(a||{})===syncStable(b||{}); }
-function syncCount(p){ let n=0; SYNC_COLLS.forEach(c=>{ if(c!=='schedule'&&c!=='subjects'&&Array.isArray(p[c])) n+=p[c].length; }); return n; }
-
-
-/* ---- tombstones: a durable \"this record was deleted\" note, so a deletion survives an import/restore/new device (no base) ---- */
-function syncKeysNow(){
-  const o={};
-  SYNC_COLLS.forEach(c=>{ const a=DB[c], m=o[c]={}; if(Array.isArray(a)) a.forEach(it=>{ m[syncKey(c,it)]=1; }); });
-  return o;
-}
-function syncPruneDeleted(list){
-  const cutoff=Date.now()-SYNC_DEL_MAX_AGE;
-  return (Array.isArray(list)?list:[]).filter(d=>d && d.c && d.k!==undefined && (Number(d.at)||0)>=cutoff).slice(-3000);
-}
-// Called from every saveDB(): any record key that was present at the previous save and is gone now = deleted by the user.
-function syncTrackDeletes(){
-  if(DEMO_MODE) return;
-  if(syncSeenRef!==DB || !syncSeenKeys){ syncSeenRef=DB; syncSeenKeys=syncKeysNow(); return; }   // DB was replaced wholesale (import/restore/reset): that is not a user deletion
-  const now=Date.now(), cur=syncKeysNow();
-  if(!Array.isArray(DB.deleted)) DB.deleted=[];
-  const have={}; DB.deleted.forEach(d=>{ if(d) have[d.c+'\u0001'+d.k]=d; });
+// this device's own unsent changes = local vs shadow
+function syncDiff(shadow){
+  const sh=shadow||{c:{},s:{},x:{}}, ops=[];
   SYNC_COLLS.forEach(c=>{
-    const prev=syncSeenKeys[c]||{}, now_=cur[c]||{};
-    Object.keys(prev).forEach(k=>{
-      if(now_[k]) return;
-      const id=c+'\u0001'+k;
-      if(have[id]) have[id].at=now; else { const d={c:c,k:k,at:now}; DB.deleted.push(d); have[id]=d; }
-    });
+    const sm=(sh.c&&sh.c[c])||{}, seen={};
+    const arr=Array.isArray(DB[c])?DB[c]:[], ks=syncKeysOf(c,arr);
+    arr.forEach((it,i)=>{ const k=ks[i]; seen[k]=1; if(sm[k]!==syncHash(c,it)) ops.push({o:'put',c:c,k:k,r:syncClean(it)}); });
+    Object.keys(sm).forEach(k=>{ if(!seen[k]) ops.push({o:'del',c:c,k:k}); });
   });
-  DB.deleted=syncPruneDeleted(DB.deleted);
-  syncSeenKeys=cur;
+  syncSettingKeys(DB.settings).forEach(k=>{ if(((sh.s||{})[k])!==syncHash(null,DB.settings[k])) ops.push({o:'set',s:k,v:syncClone(DB.settings[k])}); });
+  syncXKeys().forEach(k=>{ if(((sh.x||{})[k])!==syncHash(null,DB[k])) ops.push({o:'setx',x:k,v:syncClone(DB[k])}); });
+  return ops;
 }
-function syncTombMap(list){
-  const m={}; (Array.isArray(list)?list:[]).forEach(d=>{ if(d && d.c && d.k!==undefined) m[d.c+'\u0001'+d.k]=Math.max(m[d.c+'\u0001'+d.k]||0,Number(d.at)||0); });
-  return m;
+function syncBuildState(){
+  const st={c:{},s:{},x:{}};
+  SYNC_COLLS.forEach(c=>{ const arr=Array.isArray(DB[c])?DB[c]:[], ks=syncKeysOf(c,arr); st.c[c]=arr.map((it,i)=>({k:ks[i],r:syncClean(it)})); });
+  syncSettingKeys(DB.settings).forEach(k=>{ st.s[k]={v:syncClone(DB.settings[k])}; });
+  syncXKeys().forEach(k=>{ st.x[k]={v:syncClone(DB[k])}; });
+  return st;
 }
-/* ---- structured 3-way merge for object/array settings (expense categories, income sources, carry-over ...) ----
-   b = last synced value (undefined if unknown). Without b nothing can be deleted: union, local wins on a true clash. */
-function syncItemKey(x){
-  if(x && typeof x==='object') return x.id!==undefined ? 'i'+x.id : (x.n!==undefined ? 'n'+x.n : 'j'+syncStable(x));
-  return 's'+String(x);
-}
-function syncMergeVal(l,r,b){
-  const same=(a,c)=>syncStable(a)===syncStable(c);
-  const clone=v=>v===undefined?undefined:JSON.parse(JSON.stringify(v));
-  if(same(l,r)) return {v:clone(l),conflict:false};
-  if(b!==undefined){ if(same(l,b)) return {v:clone(r),conflict:false}; if(same(r,b)) return {v:clone(l),conflict:false}; }
-  const isObj=v=>v && typeof v==='object' && !Array.isArray(v);
-  let conflict=false;
-  if(isObj(l)&&isObj(r)){
-    const bo=isObj(b)?b:undefined, out={};
-    const keys=Object.keys(l); Object.keys(r).forEach(k=>{ if(keys.indexOf(k)<0) keys.push(k); });
-    keys.forEach(k=>{
-      const inL=(k in l), inR=(k in r), inB=bo&&(k in bo);
-      if(inL&&!inR){ if(inB && same(l[k],bo[k])) return; out[k]=clone(l[k]); return; }       // deleted on the other device, untouched here -> gone
-      if(inR&&!inL){ if(inB && same(r[k],bo[k])) return; out[k]=clone(r[k]); return; }       // deleted here, untouched there -> stays gone
-      const m=syncMergeVal(l[k],r[k],inB?bo[k]:undefined); out[k]=m.v; if(m.conflict) conflict=true;
-    });
-    return {v:out,conflict};
-  }
-  if(Array.isArray(l)&&Array.isArray(r)){
-    const ba=Array.isArray(b)?b:undefined, bm=new Map(), lm=new Map(), rm=new Map(), out=[];
-    if(ba) ba.forEach(x=>bm.set(syncItemKey(x),x));
-    l.forEach(x=>lm.set(syncItemKey(x),x)); r.forEach(x=>rm.set(syncItemKey(x),x));
-    l.forEach(x=>{
-      const k=syncItemKey(x);
-      if(!rm.has(k)){ if(ba && bm.has(k) && same(x,bm.get(k))) return; out.push(clone(x)); return; }
-      const m=syncMergeVal(x,rm.get(k),bm.has(k)?bm.get(k):undefined); out.push(m.v); if(m.conflict) conflict=true;
-    });
-    r.forEach(x=>{
-      const k=syncItemKey(x); if(lm.has(k)) return;
-      if(ba && bm.has(k) && same(x,bm.get(k))) return;
-      out.push(clone(x));
-    });
-    return {v:out,conflict};
-  }
-  return {v:clone(l),conflict:true};   // plain values changed on both sides: local wins, logged
-}
+function syncStateCount(st){ let n=0; SYNC_COLLS.forEach(c=>{ if(c!=='schedule'&&c!=='subjects'&&st&&st.c&&Array.isArray(st.c[c])) n+=st.c[c].length; }); return n; }
+function syncReplaceInPlace(loc,r){ Object.keys(loc).forEach(x=>delete loc[x]); Object.assign(loc,syncClone(r)); }
 
-// Pure 3-way merge. L = local payload, R = remote payload, base = {c:{coll:{key:hash}},s:{key:hash}} or null.
-function syncMerge(L,R,base){
-  base=base||{c:{},s:{}};
-  let dfltDB=null; try{ dfltDB=defaultDB(); }catch(e){}
-  const dflt=dfltDB?dfltDB.settings:null;
-  const out=Object.assign({},L), stats={added:0,removed:0,updated:0,keptEdit:0,conflicts:0}, conflicts=[];
-  const pristineFirst=c=>{   // first sync ever AND this device still has the untouched factory list
-    const la=Array.isArray(L[c])?L[c]:[], ra=Array.isArray(R[c])?R[c]:[], bm=(base.c&&base.c[c])||{};
-    if(!dfltDB || Object.keys(bm).length || !ra.length || !Array.isArray(dfltDB[c]) || la.length!==dfltDB[c].length) return false;
-    const sig=arr=>arr.map(x=>syncHash(c,x)).sort().join(',');
-    return sig(la)===sig(dfltDB[c]);
-  };
-  const tl=syncTombMap(L.deleted), trm=syncTombMap(R.deleted);
-  const dropGhostLogs=pristineFirst('schedule');   // logs auto-made from a factory schedule that is about to be replaced
-  SYNC_COLLS.forEach(c=>{
-    const la=Array.isArray(L[c])?L[c]:[], ra=Array.isArray(R[c])?R[c]:[], bm=(base.c&&base.c[c])||{};
-    // A brand-new device starts with the factory schedule/subjects (random ids). On the very first sync those must
-    // give way to the real ones instead of being added on top of them (that would double your schedule).
-    if((c==='schedule'||c==='subjects') && pristineFirst(c)){ out[c]=ra.slice(); stats.added+=ra.length; return; }
-    const rm=new Map(), lm=new Map();
-    ra.forEach(it=>rm.set(syncKey(c,it),it)); la.forEach(it=>lm.set(syncKey(c,it),it));
-    const res=[];
-    la.forEach(it=>{
-      const k=syncKey(c,it), hl=syncHash(c,it), hb=bm[k], r=rm.get(k);
-      if(r===undefined){
-        if(hb===undefined){
-          const tt=trm[c+'\u0001'+k];
-          if(dropGhostLogs && c==='sessionLogs' && it && it.autoFilled===true){ stats.removed++; }
-          else if(tt!==undefined && !((Number(it&&it._u)||0)>tt)){ stats.removed++; }   // the other device deleted it (tombstone) and it was not edited since
-          else res.push(it);                                                            // genuinely new on this device
-        }
-        else if(hl===hb) stats.removed++;                        // deleted on the other device, untouched here
-        else { res.push(it); stats.keptEdit++; }                 // edited here, deleted there -> keep the edit
+// Apply the sheet's change-log entries (everything newer than this device's seq). Returns {changed,conflicts,deletes}.
+function syncApplyEntries(entries,S){
+  const sh=S.shadow, conflicts=[], me=syncDeviceId(); let changed=false, deletes=0, needFull=false;
+  const maps={}; SYNC_COLLS.forEach(c=>{ const m=maps[c]=new Map(), arr=Array.isArray(DB[c])?DB[c]:[], ks=syncKeysOf(c,arr); arr.forEach((it,i)=>m.set(ks[i],it)); });
+  entries.forEach(e=>{
+    if(!e) return;
+    if(e.big){ needFull=true; return; }
+    if(e.d && e.d===me) return;                       // an echo of this device's own change: already applied
+    if(e.o==='put'||e.o==='del'){
+      const c=e.c; if(SYNC_COLLS.indexOf(c)<0) return;   // collection from a newer app version: ignore, never crash
+      if(!Array.isArray(DB[c])) DB[c]=[];
+      const m=maps[c], k=e.k, loc=m.get(k), lh=loc?syncHash(c,loc):undefined, sk=sh.c[c]&&sh.c[c][k], pending=(lh!==sk);
+      if(e.o==='put'){
+        const rh=syncHash(c,e.r);
+        if(!pending){
+          if(loc){ if(lh!==rh){ syncReplaceInPlace(loc,e.r); changed=true; } }
+          else { const it=syncClone(e.r); DB[c].push(it); m.set(k,it); changed=true; }
+        } else if(!loc){ const it=syncClone(e.r); DB[c].push(it); m.set(k,it); changed=true; conflicts.push({coll:c,key:k,kept:'remote (edited elsewhere, deleted here)',lost:null}); }
+        else if(lh!==rh){ conflicts.push({coll:c,key:k,kept:'local',lost:syncClone(e.r)}); }
+        (sh.c[c]||(sh.c[c]={}))[k]=rh;
       } else {
-        const hr=syncHash(c,r);
-        if(hl===hr) res.push(it);
-        else if(hb!==undefined && hl===hb){ res.push(r); stats.updated++; }   // only the other device changed it
-        else if(hb!==undefined && hr===hb) res.push(it);                       // only this device changed it
-        else {                                                                  // both changed (or no common base)
-          const lu=Number(it&&it._u)||0, ru=Number(r&&r._u)||0;
-          if(ru>lu){ res.push(r); stats.updated++; conflicts.push({coll:c,key:k,kept:'remote',lost:it}); }
-          else { res.push(it); conflicts.push({coll:c,key:k,kept:'local',lost:r}); }
-          stats.conflicts++;
-        }
+        if(!pending){ if(loc){ const i=DB[c].indexOf(loc); if(i>=0) DB[c].splice(i,1); m.delete(k); changed=true; deletes++; } }
+        else if(loc){ conflicts.push({coll:c,key:k,kept:'local (edited here, deleted elsewhere)',lost:null}); }
+        if(sh.c[c]) delete sh.c[c][k];
       }
-    });
-    ra.forEach(r=>{
-      const k=syncKey(c,r); if(lm.has(k)) return;
-      const hb=bm[k], hr=syncHash(c,r);
-      if(hb===undefined){
-        const tt=tl[c+'\u0001'+k];
-        if(tt!==undefined && !((Number(r&&r._u)||0)>tt)){ /* deleted here (tombstone), not edited there since -> stays deleted */ }
-        else { res.push(r); stats.added++; }                                       // new on the other device
-      }
-      else if(hr===hb){ /* deleted here, untouched there -> stays deleted */ }
-      else { res.push(r); stats.keptEdit++; }                                    // deleted here, edited there -> keep the edit
-    });
-    out[c]=res;
-  });
-  // settings: per key; device-local keys are never touched
-  const ls=(L.settings||{}), rs=(R.settings||{}), bs=base.s||{}, ms=Object.assign({},ls);
-  Object.keys(rs).forEach(k=>{
-    if(SYNC_LOCAL_SETTINGS.indexOf(k)>=0) return;
-    if(!(k in ls)){ ms[k]=rs[k]; return; }
-    const hl=syncHash(null,ls[k]), hr=syncHash(null,rs[k]), hb=bs[k];
-    if(hl===hr) return;
-    if(hb!==undefined && hl===hb) ms[k]=rs[k];                                   // only the other device changed it
-    else if(hb===undefined && dflt && (k in dflt) && hl===syncHash(null,dflt[k])) ms[k]=rs[k];   // no history yet and this device still has the factory default -> take the cloud value
-    else if(hb===undefined || hr!==hb){
-      const bv=(hb!==undefined && base.sv && (k in base.sv))?base.sv[k]:undefined;
-      const mv=syncMergeVal(ls[k],rs[k],bv);
-      ms[k]=mv.v;
-      if(mv.conflict) conflicts.push({coll:'settings',key:k,kept:'local',lost:rs[k]});
+    } else if(e.o==='set' && e.s && SYNC_LOCAL_SETTINGS.indexOf(e.s)<0){
+      const lh=(e.s in DB.settings)?syncHash(null,DB.settings[e.s]):undefined, pending=(lh!==sh.s[e.s]), rh=syncHash(null,e.v);
+      if(!pending){ if(lh!==rh){ DB.settings[e.s]=syncClone(e.v); changed=true; } }
+      else if(lh!==rh) conflicts.push({coll:'settings',key:e.s,kept:'local',lost:syncClone(e.v)});
+      sh.s[e.s]=rh;
+    } else if(e.o==='setx' && e.x && SYNC_COLLS.indexOf(e.x)<0 && SYNC_NOT_SHARED_TOP.indexOf(e.x)<0){
+      const lh=(e.x in DB)?syncHash(null,DB[e.x]):undefined, pending=(lh!==sh.x[e.x]), rh=syncHash(null,e.v);
+      if(!pending){ if(lh!==rh){ DB[e.x]=syncClone(e.v); changed=true; } }
+      else if(lh!==rh) conflicts.push({coll:'top-level',key:e.x,kept:'local',lost:syncClone(e.v)});
+      sh.x[e.x]=rh;
     }
   });
-  out.settings=ms;
-  // tombstones: union (newest wins), minus anything the merge kept alive, minus old ones
-  const dm={}; [tl,trm].forEach(m=>Object.keys(m).forEach(id=>{ dm[id]=Math.max(dm[id]||0,m[id]); }));
-  const dl=[];
-  Object.keys(dm).forEach(id=>{
-    const p=id.split('\u0001'), c=p[0], k=p.slice(1).join('\u0001'), arr=out[c];
-    if(Array.isArray(arr) && arr.some(it=>syncKey(c,it)===k)) return;
-    dl.push({c:c,k:k,at:dm[id]});
+  return {changed,conflicts,deletes,needFull};
+}
+// Apply the sheet's complete state. replace=true: this device becomes an exact copy of the sheet (download).
+// replace=false: same, but this device's own unsent changes are kept and sent afterwards.
+function syncApplyFull(state,S,replace){
+  const old=replace?{c:{},s:{},x:{}}:(S.shadow||{c:{},s:{},x:{}}), ns={c:{},s:{},x:{}}, conflicts=[]; let changed=false;
+  SYNC_COLLS.forEach(c=>{
+    const server=(state.c&&Array.isArray(state.c[c]))?state.c[c]:[], loc0=Array.isArray(DB[c])?DB[c]:[];
+    const lm=new Map(), lks=syncKeysOf(c,loc0); loc0.forEach((it,i)=>lm.set(lks[i],it));
+    const out=[], used=new Set(), os=(old.c&&old.c[c])||{}; ns.c[c]={};
+    server.forEach(en=>{
+      const k=en.k, rh=syncHash(c,en.r), loc=lm.get(k); used.add(k); ns.c[c][k]=rh;
+      if(replace){ out.push(syncClone(en.r)); return; }
+      if(!loc){
+        if(os[k]!==undefined && os[k]===rh) return;       // deleted here, unchanged on the sheet: stays deleted (sent as a delete)
+        out.push(syncClone(en.r)); return;                // new on the sheet, or edited there after we deleted it: edit wins
+      }
+      const lh=syncHash(c,loc);
+      if(lh===rh){ out.push(loc); return; }
+      if(lh!==os[k]){ conflicts.push({coll:c,key:k,kept:'local',lost:syncClone(en.r)}); out.push(loc); return; }   // edited here, unsent
+      syncReplaceInPlace(loc,en.r); out.push(loc);
+    });
+    if(!replace) lm.forEach((loc,k)=>{ if(used.has(k)) return; if(syncHash(c,loc)!==os[k]) out.push(loc); });   // new/edited here and unsent: keep; untouched here but gone on the sheet: it was deleted elsewhere
+    DB[c]=out; changed=true;
   });
-  out.deleted=syncPruneDeleted(dl);
-  return {out,stats,conflicts};
+  const sv=state.s||{};
+  Object.keys(sv).forEach(k=>{
+    if(SYNC_LOCAL_SETTINGS.indexOf(k)>=0) return;
+    const rh=syncHash(null,sv[k].v); ns.s[k]=rh;
+    const has=(k in DB.settings), lh=has?syncHash(null,DB.settings[k]):undefined;
+    if(!replace && has && lh!==rh && lh!==(old.s||{})[k]){ conflicts.push({coll:'settings',key:k,kept:'local',lost:syncClone(sv[k].v)}); return; }
+    if(lh!==rh) DB.settings[k]=syncClone(sv[k].v);
+  });
+  const xv=state.x||{};
+  Object.keys(xv).forEach(k=>{
+    if(SYNC_COLLS.indexOf(k)>=0||SYNC_NOT_SHARED_TOP.indexOf(k)>=0) return;
+    const rh=syncHash(null,xv[k].v); ns.x[k]=rh;
+    const has=(k in DB), lh=has?syncHash(null,DB[k]):undefined;
+    if(!replace && has && lh!==rh && lh!==(old.x||{})[k]){ conflicts.push({coll:'top-level',key:k,kept:'local',lost:syncClone(xv[k].v)}); return; }
+    if(lh!==rh) DB[k]=syncClone(xv[k].v);
+  });
+  return {shadow:ns,conflicts,changed};
+}
+function syncStateToDbCopy(st){
+  const db={settings:{}};
+  Object.keys(st.c||{}).forEach(c=>{ db[c]=(st.c[c]||[]).map(en=>en.r); });
+  Object.keys(st.s||{}).forEach(k=>{ db.settings[k]=st.s[k].v; });
+  Object.keys(st.x||{}).forEach(k=>{ db[k]=st.x[k].v; });
+  return db;
 }
 
 /* ---- state, UI, helpers ---- */
 function syncLoadState(){ try{ return JSON.parse(localStorage.getItem(SYNC_STATE_KEY))||{}; }catch(e){ return {}; } }
 function syncSaveState(s){ try{ localStorage.setItem(SYNC_STATE_KEY,JSON.stringify(s)); }catch(e){ console.warn('sync state save failed',e); } }
-function syncResetBase(){ const S=syncLoadState(); delete S.base; delete S.rev; delete S.sv; syncSaveState(S); }
-function syncSetBase(S,payload,rev){ S.base=syncMap(payload); S.sv=JSON.parse(JSON.stringify(payload.settings||{})); S.rev=rev; } // next sync = pull + union-merge, never deletes anything
+function syncResetBase(){ const S=syncLoadState(); ['shadow','seq','inflight','needFull','lastFull','base','rev','sv'].forEach(k=>delete S[k]); syncSaveState(S); }
 function syncDeviceId(){ try{ let d=localStorage.getItem(SYNC_DEV_KEY); if(!d){ d=uid('dev'); localStorage.setItem(SYNC_DEV_KEY,d); } return d; }catch(e){ return 'dev_unknown'; } }
 function syncEnabled(){
   if(DEMO_MODE) return false;
@@ -763,15 +698,17 @@ function syncStatusLine(){
   if(SyncUI.state==='syncing') t='Syncing…';
   else if(SyncUI.state==='offline') t='Offline — changes are safe on this device and will sync when you are back online.';
   else if(SyncUI.state==='waiting') t='Waiting until you finish editing…';
+  else if(SyncUI.state==='needsInit') t='⚠ '+SyncUI.msg;
   else if(SyncUI.state==='error') t='⚠ '+SyncUI.msg;
   else t=S.lastOk ? 'Synced ✓ '+new Date(S.lastOk).toLocaleString() : 'Not synced yet.';
+  if(S.warning && SyncUI.state==='idle') t+=' · '+S.warning;
   return t+(nConf?` · ${nConf} conflict(s) logged`:'');
 }
 function syncSet(state,msg){
   SyncUI.state=state; SyncUI.msg=msg||'';
   try{ const el=document.getElementById('syncStatusText'); if(el) el.textContent=syncStatusLine(); }catch(e){}
 }
-function syncSchedule(delay){ clearTimeout(syncTimer); syncTimer=setTimeout(()=>syncNow('edit'),delay||3000); }
+function syncSchedule(delay){ clearTimeout(syncTimer); syncTimer=setTimeout(()=>syncNow('edit'),delay||1500); }
 function syncRetryLater(){ SyncUI.state='waiting'; syncSet('waiting'); clearTimeout(syncRetryTimer); syncRetryTimer=setTimeout(()=>syncNow('retry'),6000); }
 function syncURL(act){
   const st=DB.settings, u=st.sheetsWebAppUrl;
@@ -792,13 +729,29 @@ async function syncReq(url,opts,timeoutMs){
     }
   } finally { clearTimeout(t); }
 }
+function syncPost(body,timeoutMs){
+  return syncReq(syncURL('x').replace(/action=x/,'action='+body.action),{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({token:DB.settings.syncToken||'',dev:syncDeviceId()},body))},timeoutMs||60000);
+}
 function syncLogConflicts(list){
-  if(!list.length) return;
+  if(!list||!list.length) return;
   try{
     const old=JSON.parse(localStorage.getItem(SYNC_CONFLICT_KEY)||'[]');
     const add=list.map(c=>({at:new Date().toISOString(),coll:c.coll,key:c.key,keptFrom:c.kept,lostVersion:c.lost}));
     localStorage.setItem(SYNC_CONFLICT_KEY,JSON.stringify(old.concat(add).slice(-100)));
   }catch(e){}
+}
+function syncCheckProto(meta){
+  if(!meta || !meta.ok) throw new Error((meta&&meta.error)||'Could not reach the sync endpoint');
+  if(meta.proto!==2) throw new Error('The sheet script is the OLD version. Paste the new Code.gs into Apps Script and deploy: Deploy → Manage deployments → Edit → Version: New version.');
+}
+function syncSavePre(){
+  try{ localStorage.setItem(SYNC_PRE_KEY,JSON.stringify({at:new Date().toISOString(),db:DB})); return true; }
+  catch(e){ throw new Error('Not enough storage to safely apply changes — sync stopped, nothing changed'); }
+}
+function syncAfterApply(){
+  if(!syncPersistLocal()) throw new Error('Could not save the downloaded data on this device');
+  if((DB.students||[]).length) DB.settings.onboarded=true;
+  if(!(ROUTE.page==='today' && todayEditMode)){ try{ render(); }catch(e){ console.warn(e); } }
 }
 
 /* ---- the engine ---- */
@@ -809,65 +762,73 @@ async function syncNow(reason){
   if(reason!=='manual' && syncUserBusy()){ syncRetryLater(); return; }
   syncBusy=true; syncAgain=false; syncSet('syncing');
   try{
-    syncStamp();
     const S=syncLoadState();
-    let done=false;
-    for(let attempt=0; attempt<3 && !done; attempt++){
-      const meta=await syncReq(syncURL('meta'));
-      if(!meta || !meta.ok) throw new Error((meta&&meta.error)||'Could not reach the sync endpoint');
-      const dirty=!syncSameMap(syncMap(syncPayload()),S.base);
-      if(S.base && meta.rev===S.rev && !dirty){ done=true; break; }
-      let remote=null, remoteRev=meta.rev;
-      if(meta.rev>0 && (meta.rev!==S.rev || !S.base)){
-        const r=await syncReq(syncURL('restore'),null,60000);
-        if(!r || !r.ok) throw new Error((r&&r.error)||'Could not download the backup');
-        if(!r.data || !Array.isArray(r.data.students)) throw new Error('Cloud copy looks corrupted — sync stopped, nothing changed');
-        remote=r.data; remoteRev=(r.rev!==undefined?r.rev:meta.rev);
-      }
-      if(reason!=='manual' && syncUserBusy()){ syncRetryLater(); return; }  // user started typing while we were fetching: apply later
-      if(remote){
-        const res=syncMerge(syncPayload(),remote,S.base?Object.assign({},S.base,{sv:S.sv}):S.base);
-        const rc=syncCount(remote);
-        if(rc>=10 && syncCount(res.out)<rc*0.5) throw new Error('Sync stopped: this would delete more than half of your records. Nothing was changed. Use Import/Restore if this is really intended.');
-        const changed=!syncSameMap(syncMap(syncPayload()),syncMap(res.out));
-        if(changed){
-          try{ localStorage.setItem(SYNC_PRE_KEY,JSON.stringify({at:new Date().toISOString(),db:DB})); }
-          catch(e){ throw new Error('Not enough storage to safely merge — sync stopped, nothing changed'); }
-          Object.keys(res.out).forEach(k=>{ if(k==='settings') Object.assign(DB.settings,res.out.settings); else DB[k]=res.out[k]; }); // settings: only shared keys are overwritten, this device's own URL/token/theme stay
-          syncSeenRef=DB; syncSeenKeys=syncKeysNow();   // records removed by the merge are not user deletions
-          if((DB.students||[]).length) DB.settings.onboarded=true;
-          if(!syncPersistLocal()) throw new Error('Could not save merged data on this device');
-          syncLogConflicts(res.conflicts);
-          if(!(ROUTE.page==='today' && todayEditMode)) { try{ render(); }catch(e){ console.warn(e); } }
-        } else { syncLogConflicts(res.conflicts); DB.deleted=res.out.deleted; }
-      }
-      const payload=syncPayload(), pushedMap=syncMap(payload);
-      if(remote && syncSameMap(pushedMap,syncMap(remote))){        // already identical to the cloud
-        syncSetBase(S,payload,remoteRev); done=true; break;
-      }
-      if(!remote && isDbEmpty()){ done=true; break; }                // nothing worth pushing
-      let resp;
-      try{
-        resp=await syncReq(syncURL('x').replace(/action=x/,'action=sync'),{
-          method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-          body:JSON.stringify({action:'sync',baseRev:remoteRev,deviceId:syncDeviceId(),token:DB.settings.syncToken||'',readable:(reason==='manual'),data:payload})
-        },60000);
-      }catch(pe){
-        // Timed out: the script may still have saved it. Re-check the cloud instead of assuming failure.
-        if(pe && pe.name==='AbortError'){ continue; }
-        throw pe;
-      }
-      if(resp && resp.ok){ syncSetBase(S,payload,resp.rev); done=true; break; }
-      if(resp && resp.conflict){ continue; }                        // someone pushed in between: pull + merge again
-      throw new Error((resp&&resp.error)||'Push failed');
+    let meta=await syncReq(syncURL('meta'));
+    syncCheckProto(meta);
+    S.warning=meta.warning||'';
+    if(!S.shadow){
+      // This device has never synced with this sheet. Nothing is merged automatically: the person decides.
+      if(meta.empty){ syncSaveState(S); syncSet('needsInit','The sheet is empty. Settings → "Upload this device to the sheet" puts this device\'s data there.'); return; }
+      if(!isDbEmpty()){ syncSaveState(S); syncSet('needsInit','The sheet already has data and this device has different data. Settings → "Download from the sheet" (replaces this device) or "Upload this device to the sheet" (replaces the sheet). Nothing is merged on its own.'); return; }
+      await syncDownloadCore(S,{});     // empty device: just take the sheet's data (nothing to lose)
+      meta=await syncReq(syncURL('meta')); syncCheckProto(meta);
     }
-    if(!done) throw new Error('Cloud kept changing while syncing — will retry');
+    let done=false;
+    for(let i=0;i<12 && !done;i++){
+      const stale=S.needFull || (Date.now()-(S.lastFull||0)>86400000);
+      if(meta.seq!==S.seq || stale){
+        if(reason!=='manual' && syncUserBusy()){ syncSaveState(S); syncRetryLater(); return; }
+        const r=await syncReq(syncURL('pull&since='+(stale?0:S.seq)),null,60000);
+        if(!r || !r.ok) throw new Error((r&&r.error)||'Could not download the changes');
+        if(r.empty){ delete S.shadow; syncSaveState(S); syncSet('needsInit','The sheet was emptied. Settings → "Upload this device to the sheet" to put this device\'s data back.'); return; }
+        if(reason!=='manual' && syncUserBusy()){ syncSaveState(S); syncRetryLater(); return; }
+        if(r.full){
+          const lc=syncStateCount(syncBuildState()), sc=syncStateCount(r.state);
+          if(lc>=10 && sc<lc*0.5) throw new Error('Sync stopped: the sheet holds less than half of this device\'s records. Nothing was changed. Use "Upload this device to the sheet" if the sheet is wrong, or "Download from the sheet" if this device is.');
+          syncSavePre();
+          const res=syncApplyFull(r.state,S,false); S.shadow=res.shadow; S.needFull=false; S.lastFull=Date.now(); syncLogConflicts(res.conflicts);
+          syncAfterApply();
+        } else if(r.ops && r.ops.length){
+          if(r.ops.some(e=>e&&e.o==='del')) syncSavePre();
+          const res=syncApplyEntries(r.ops,S); syncLogConflicts(res.conflicts);
+          if(res.needFull) S.needFull=true;
+          if(res.changed) syncAfterApply();
+        }
+        S.seq=r.seq; syncSaveState(S);
+        if(S.needFull) { meta={seq:-1}; continue; }
+      }
+      let inflight=S.inflight;
+      if(!inflight){
+        const ops=syncDiff(S.shadow);
+        if(!ops.length){ done=true; break; }
+        inflight={bid:syncDeviceId()+':'+Date.now().toString(36)+Math.random().toString(36).slice(2,7),ops:ops.slice(0,SYNC_CHUNK)};
+        S.inflight=inflight; syncSaveState(S);
+      }
+      let resp;
+      try{ resp=await syncPost({action:'push',bid:inflight.bid,from:S.seq,ops:inflight.ops,readable:(reason==='manual')},60000); }
+      catch(pe){ if(pe && pe.name==='AbortError'){ S.needFull=true; syncSaveState(S); throw pe; } throw pe; }   // outcome unknown: the same batch id is re-sent next time, and a full check is forced
+      if(!resp || !resp.ok) throw new Error((resp&&resp.error)||'Push failed');
+      const rej={}; (resp.rejected||[]).forEach(x=>{ rej[x.c+'\u0001'+x.k]=1; });
+      inflight.ops.forEach(op=>{
+        if(op.o==='put'){ (S.shadow.c[op.c]||(S.shadow.c[op.c]={}))[op.k]=syncHash(op.c,op.r); }
+        else if(op.o==='del'){ if(!rej[op.c+'\u0001'+op.k] && S.shadow.c[op.c]) delete S.shadow.c[op.c][op.k]; }
+        else if(op.o==='set'){ S.shadow.s[op.s]=syncHash(null,op.v); }
+        else if(op.o==='setx'){ S.shadow.x[op.x]=syncHash(null,op.v); }
+      });
+      S.inflight=null;
+      if(resp.dup) S.needFull=true;                                  // a retry of something the sheet already had: reconcile fully once
+      if(resp.before===S.seq && !(resp.rejected||[]).length) S.seq=resp.seq;
+      syncSaveState(S);
+      meta={seq:(resp.rejected&&resp.rejected.length)||resp.dup?-1:resp.seq};   // rejected delete or retry: pull again before finishing
+      if(S.seq===resp.seq && !S.needFull) meta.seq=S.seq;
+    }
+    if(!done) throw new Error('The sheet kept changing while syncing — will retry');
     S.lastOk=new Date().toISOString(); syncSaveState(S);
     DB.settings.lastSheetsBackupAt=S.lastOk; syncPersistLocal();
     syncSet('idle');
     try{ autoFillMissedSessionLogs(); }catch(e){}
     if(ROUTE.page==='settings'){ const el=document.getElementById('syncStatusText'); if(el) el.textContent=syncStatusLine(); }
-    if(!syncSameMap(syncMap(syncPayload()),S.base)) syncAgain=true;  // edits made while we were syncing
+    if(syncDiff(S.shadow).length) syncAgain=true;   // edits made while we were syncing
   }catch(err){
     console.warn('Sync failed:',err);
     const deviceOffline=(typeof navigator!=='undefined' && navigator.onLine===false);
@@ -881,76 +842,92 @@ async function syncNow(reason){
   }
 }
 
-/* ---- "this device is the truth": replace the cloud with this device's data (used after an import, or from Settings) ---- */
+/* ---- Download / Upload (explicit, with a confirm that shows exactly what changes) ---- */
 function syncDownloadText(name,text){
   try{ const blob=new Blob([text],{type:'application/json'}), a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }catch(e){}
 }
-async function syncReplaceCloud(){
+function syncCompare(localState,serverState){
+  let onlyLocal=0, onlyServer=0; const parts=[];
+  SYNC_COLLS.forEach(c=>{
+    if(c==='schedule'||c==='subjects'||c==='sessionLogs'||c==='budgetPlans') return;
+    const lk={}, sk={}; ((localState.c||{})[c]||[]).forEach(en=>{ lk[en.k]=1; }); ((serverState.c||{})[c]||[]).forEach(en=>{ sk[en.k]=1; });
+    const a=Object.keys(lk).filter(k=>!sk[k]).length, b=Object.keys(sk).filter(k=>!lk[k]).length;
+    onlyLocal+=a; onlyServer+=b; if(b) parts.push(c+' '+b);
+  });
+  return {onlyLocal,onlyServer,serverOnlyText:parts.join(', ')};
+}
+async function syncDownloadCore(S,opts){
+  const r=await syncReq(syncURL('pull&since=0'),null,60000);
+  if(!r || !r.ok) throw new Error((r&&r.error)||'Could not download from the sheet');
+  if(r.empty || !r.state || !r.state.c || !Array.isArray(r.state.c.students)) throw new Error('The sheet has no data yet. Use "Upload this device to the sheet" first.');
+  if(!isDbEmpty()) syncSavePre();
+  const res=syncApplyFull(r.state,S,true);
+  S.shadow=res.shadow; S.seq=r.seq; S.inflight=null; S.needFull=false; S.lastFull=Date.now(); S.lastOk=new Date().toISOString();
+  syncSaveState(S);
+  DB.settings.syncOn=true; DB.settings.onboarded=true; DB.settings.lastSheetsBackupAt=S.lastOk;
+  syncAfterApply();
+}
+async function syncDownloadAll(skipConfirm){
+  if(DEMO_MODE){ toast('Sheets sync is disabled in demo mode'); return false; }
+  if(!DB.settings.sheetsWebAppUrl){ alert('Add your Apps Script Web App URL in Settings first.'); return false; }
+  try{
+    toast('Checking the sheet…');
+    const meta=await syncReq(syncURL('meta')); syncCheckProto(meta);
+    if(meta.empty) throw new Error('The sheet has no data yet. Use "Upload this device to the sheet" first.');
+    const r=await syncReq(syncURL('pull&since=0'),null,60000);
+    if(!r || !r.ok || !r.state) throw new Error((r&&r.error)||'Could not download from the sheet');
+    if(!skipConfirm && !isDbEmpty()){
+      const cmp=syncCompare(syncBuildState(),r.state);
+      if(!confirm('Make THIS device an exact copy of the sheet?\n\n• '+cmp.onlyLocal+' record(s) on this device are not on the sheet and will be removed from this device.\n• '+cmp.onlyServer+' record(s) on the sheet are not here and will be added'+(cmp.serverOnlyText?' ('+cmp.serverOnlyText+')':'')+'.\n\nA copy of this device\'s current data is kept (Settings → Undo last sync). Continue?')) return false;
+    }
+    const S=syncLoadState();
+    DB_KEY=REAL_DB_KEY; DEMO_MODE=false;
+    if(!isDbEmpty()) syncSavePre();
+    const res=syncApplyFull(r.state,S,true);
+    S.shadow=res.shadow; S.seq=r.seq; S.inflight=null; S.needFull=false; S.lastFull=Date.now(); S.lastOk=new Date().toISOString(); S.warning=meta.warning||'';
+    syncSaveState(S);
+    DB.settings.syncOn=true; DB.settings.onboarded=true; DB.settings.lastSheetsBackupAt=S.lastOk;
+    syncAfterApply(); syncSet('idle'); navigate('dashboard'); toast('Downloaded from the sheet ✓');
+    return true;
+  }catch(err){ alert('Download failed: '+(err&&err.message||err)+'\n\nNothing was changed on this device.'); return false; }
+}
+async function syncUploadAll(){
   if(DEMO_MODE) return false;
   if(!DB.settings.sheetsWebAppUrl){ alert('Add your Apps Script Web App URL in Settings first.'); return false; }
-  if(isDbEmpty()){ alert('This device has no data, so it cannot replace the cloud.'); return false; }
+  if(isDbEmpty()){ alert('This device has no data, so it cannot replace the sheet. Use "Download from the sheet" instead.'); return false; }
   try{
-    toast('Checking the cloud…');
-    syncStamp();
-    const meta=await syncReq(syncURL('meta'));
-    if(!meta || !meta.ok) throw new Error((meta&&meta.error)||'Could not reach the sync endpoint');
-    let remote=null;
-    if(meta.rev>0){
-      const r=await syncReq(syncURL('restore'),null,60000);
-      if(r && r.ok && r.data && Array.isArray(r.data.students)) remote=r.data;
-    }
-    const mine=syncPayload();
-    let removedTxt='', onlyHere=0, onlyCloud=0;
-    if(remote){
-      const parts=[];
-      SYNC_COLLS.forEach(c=>{
-        if(c==='schedule'||c==='subjects'||c==='sessionLogs'||c==='budgetPlans') return;
-        const lk={}, rk={}; (mine[c]||[]).forEach(it=>{ lk[syncKey(c,it)]=1; }); (remote[c]||[]).forEach(it=>{ rk[syncKey(c,it)]=1; });
-        const gone=Object.keys(rk).filter(k=>!lk[k]).length, add=Object.keys(lk).filter(k=>!rk[k]).length;
-        onlyCloud+=gone; onlyHere+=add; if(gone) parts.push(c+' '+gone);
-      });
-      removedTxt=parts.join(', ');
-      // always keep the old cloud copy as a file on this device before replacing it
-      syncDownloadText('teacher-planner-cloud-before-replace-'+todayISO()+'.json',JSON.stringify(remote));
-    }
-    const msg='Make THIS device the truth for ALL devices?\n\nThe cloud will be replaced with the data on this device.'
-      +(remote?'\n\n• '+onlyCloud+' record(s) that are in the cloud now are NOT on this device and will disappear from every device'+(removedTxt?' ('+removedTxt+')':'')+'.\n• '+onlyHere+' record(s) exist only on this device and will be added.\n\nA copy of the current cloud data was just downloaded as a file, and the sheet keeps a "Backup previous" tab.':'')
-      +'\n\nLive sync will be switched ON for this device. Continue?';
-    if(!confirm(msg)) return false;
-    for(let i=0;i<3;i++){
-      const m=await syncReq(syncURL('meta'));
-      if(!m || !m.ok) throw new Error((m&&m.error)||'Could not reach the sync endpoint');
-      const payload=syncPayload();
-      const resp=await syncReq(syncURL('x').replace(/action=x/,'action=sync'),{
-        method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-        body:JSON.stringify({action:'sync',force:true,baseRev:m.rev,deviceId:syncDeviceId(),token:DB.settings.syncToken||'',data:payload})
-      },60000);
-      if(resp && resp.ok){
-        const S=syncLoadState(); syncSetBase(S,payload,resp.rev); S.lastOk=new Date().toISOString(); syncSaveState(S);
-        DB.settings.syncOn=true; DB.settings.lastSheetsBackupAt=S.lastOk; syncPersistLocal();
-        syncSet('idle'); if(ROUTE.page==='settings') render();
-        toast('Cloud now matches this device ✓');
-        return true;
+    toast('Checking the sheet…');
+    const meta=await syncReq(syncURL('meta')); syncCheckProto(meta);
+    const mine=syncBuildState();
+    let msg='Upload THIS device\'s data to the sheet?';
+    if(!meta.empty){
+      const r=await syncReq(syncURL('pull&since=0'),null,60000);
+      if(r && r.ok && r.state && r.state.c){
+        const cmp=syncCompare(mine,r.state);
+        syncDownloadText('teacher-planner-sheet-before-upload-'+todayISO()+'.json',JSON.stringify(syncStateToDbCopy(r.state)));
+        msg+='\n\nThe sheet\'s data will be REPLACED:\n• '+cmp.onlyServer+' record(s) that are on the sheet now are not on this device and will disappear from every device'+(cmp.serverOnlyText?' ('+cmp.serverOnlyText+')':'')+'.\n• '+cmp.onlyLocal+' record(s) exist only on this device and will be added.\n\nA copy of the current sheet data was just downloaded as a file, and the sheet keeps it in its "State previous" tab.';
       }
-      if(resp && resp.conflict) continue;
-      throw new Error((resp&&resp.error)||'Replace failed');
-    }
-    throw new Error('Cloud kept changing — try again');
-  }catch(err){
-    alert('Could not replace the cloud: '+(err&&err.message||err)+'\n\nNothing was changed in the cloud.');
-    return false;
-  }
+    } else msg+='\n\nThe sheet is empty, so nothing will be lost.';
+    msg+='\n\nLive sync will be switched ON for this device. Continue?';
+    if(!confirm(msg)) return false;
+    const resp=await syncPost({action:'replace',state:mine},60000);
+    if(!resp || !resp.ok) throw new Error((resp&&resp.error)||'Upload failed');
+    const S=syncLoadState();
+    ['inflight','needFull','base','rev','sv'].forEach(k=>delete S[k]);
+    S.shadow=syncSnapshot(); S.seq=resp.seq; S.lastFull=Date.now(); S.lastOk=new Date().toISOString(); S.warning=meta.warning||'';
+    syncSaveState(S);
+    DB.settings.syncOn=true; DB.settings.lastSheetsBackupAt=S.lastOk; syncPersistLocal();
+    syncSet('idle'); if(ROUTE.page==='settings') render();
+    toast('The sheet now matches this device ✓');
+    return true;
+  }catch(err){ alert('Could not upload: '+(err&&err.message||err)+'\n\nNothing was changed on the sheet.'); return false; }
 }
 function syncAfterImport(){
   if(!DB.settings.sheetsWebAppUrl || DEMO_MODE) return;
-  if(confirm('Backup loaded on this device.\n\nOK = also make it the truth for ALL devices (the cloud is replaced; you will see exactly what disappears before anything happens).\nCancel = keep it on this device only; Live sync stays OFF.')){
-    const was=window.__autoWas;
-    syncReplaceCloud().then(ok=>{
-      if(ok){ if(was!==undefined) DB.settings.sheetsAutoBackup=was; syncPersistLocal(); }
-      else toast('Cloud not changed — Live sync and auto-backup stay OFF on this device');
-    });
+  if(confirm('Backup loaded on this device.\n\nOK = also put it on the sheet so every device uses it (you will see exactly what disappears before anything happens).\nCancel = keep it on this device only; Live sync stays OFF.')){
+    syncUploadAll().then(ok=>{ if(!ok) toast('The sheet was not changed — Live sync stays OFF on this device'); });
   } else {
-    DB.settings.syncOn=false; DB.settings.sheetsAutoBackup=false; syncPersistLocal(); toast('Kept on this device only — sync and auto-backup are OFF');
+    DB.settings.syncOn=false; syncPersistLocal(); toast('Kept on this device only — Live sync is OFF');
   }
 }
 function syncUndoLast(){
@@ -958,7 +935,7 @@ function syncUndoLast(){
   if(!raw){ toast('No pre-sync copy found'); return; }
   let snap; try{ snap=JSON.parse(raw); }catch(e){ toast('Pre-sync copy is unreadable'); return; }
   if(!snap||!snap.db||!Array.isArray(snap.db.students)){ toast('Pre-sync copy is unreadable'); return; }
-  if(!confirm('Go back to this device\'s data as it was just before the last sync merge ('+new Date(snap.at).toLocaleString()+')?\n\nLive sync will be switched OFF so it does not merge the newer cloud data straight back in. You can turn it on again later.')) return;
+  if(!confirm('Go back to this device\'s data as it was just before the last change from the sheet ('+new Date(snap.at).toLocaleString()+')?\n\nLive sync will be switched OFF so the sheet\'s data does not come straight back. You can turn it on again later (it will then ask you whether to download or upload).')) return;
   DB=mergeIntoDefaults(snap.db); DB.settings.syncOn=false; DB_KEY=REAL_DB_KEY; DEMO_MODE=false;
   syncResetBase(); syncPersistLocal(); navigate('settings'); toast('Went back to the pre-sync copy; live sync is off');
 }
@@ -969,10 +946,6 @@ function syncDownloadConflicts(){
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 function syncInit(){
-  try{
-    let first=false; try{ first=!localStorage.getItem(SYNC_INIT_KEY); }catch(e){}
-    if(first && !DEMO_MODE){ syncStamp(); syncPersistLocal(); }
-  }catch(e){ console.warn('sync init',e); }
   document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') syncNow('focus'); });
   window.addEventListener('online',()=>syncNow('online'));
   window.addEventListener('offline',()=>syncSet('offline'));
@@ -980,8 +953,8 @@ function syncInit(){
   setTimeout(()=>syncNow('start'),1500);
 }
 
+
 let DB = loadDB();
-try{ syncSeenRef=DB; syncSeenKeys=syncKeysNow(); }catch(e){}
 
 // Shared merge so a fresh load AND a manual "Import Backup" both survive schema
 // additions the same way — new fields fall back to defaults, nothing is dropped.
@@ -1004,7 +977,6 @@ function mergeIntoDefaults(parsed){
       if(match) blk.studentId = match.id;
     }
   });
-  if(!Array.isArray(merged.deleted)) merged.deleted = []; // backups from before sync tombstones
   if(!Array.isArray(merged.expenses)) merged.expenses = []; // backups from before the Money section
   if(!Array.isArray(merged.batchExams)) merged.batchExams = []; // backups from before batch exams
   ['incomes','loans','savingPots','savingTx'].forEach(k=>{ if(!Array.isArray(merged[k])) merged[k] = []; }); // backups from before Money v2
@@ -1045,8 +1017,6 @@ function loadDB(){
   }
 }
 function saveDB(){
-  try{ syncTrackDeletes(); }catch(e){ /* never block a save */ }
-  try{ syncStamp(); }catch(e){ /* sync bookkeeping must never block a save */ }
   try{
     localStorage.setItem(DB_KEY, JSON.stringify(DB));
   }catch(e){
@@ -1338,10 +1308,8 @@ function daysSinceLastSheetsBackup(){
 let sheetsBackupTimer = null;
 function scheduleSheetsBackup(){
   if(DEMO_MODE) return; // demo never talks to Sheets, no matter what — hard block, not just "no URL configured"
-  if(syncEnabled()){ syncSchedule(); return; } // live sync replaces the old blind overwrite push
-  if(!DB.settings.sheetsAutoBackup || !DB.settings.sheetsWebAppUrl) return;
-  clearTimeout(sheetsBackupTimer);
-  sheetsBackupTimer = setTimeout(pushToSheets, 5000);
+  if(syncEnabled()) syncSchedule();   // the sheet is the one source of truth: send only what changed
+  // (the old blind "overwrite the whole backup" push no longer exists)
 }
 
 // A brand-new device / cleared browser starts EMPTY. Pushing that would overwrite the real backup,
@@ -1350,63 +1318,9 @@ function isDbEmpty(){
   return ['students','exams','batchExams','fees','attendance','classRecords','notes','expenses','incomes','loans','savingPots','savingTx']
     .every(k=>!(DB[k] && DB[k].length));
 }
-let sheetsRefusalShown = false;
-async function pushToSheets(silent){
-  if(DEMO_MODE){ if(!silent) toast('Sheets backup is disabled in demo mode'); return; }
-  const url = DB.settings.sheetsWebAppUrl;
-  if(!url) { if(!silent) toast('⚠ Add your Apps Script Web App URL in Settings first'); return; }
-  if(isDbEmpty()){ if(!silent) toast('Nothing to back up yet. On a new device use Restore first — backing up now could replace your real backup with an empty one.'); return; }
-  if(!silent) toast('Backing up to Sheet…');
-  try{
-    const res = await fetch(url, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({ token: DB.settings.syncToken||'', data: DB })
-    });
-    const json = await res.json().catch(()=>({ok:false,error:'Bad response'}));
-    if(!json.ok){ const er = new Error(json.error||'Unknown error'); er.refused = !!json.refused; throw er; }
-    DB.settings.lastSheetsBackupAt = new Date().toISOString();
-    localStorage.setItem(DB_KEY, JSON.stringify(DB)); // direct write — avoid re-triggering saveDB's own debounce loop
-    if(ROUTE.page==='settings') render();
-    if(!silent) toast('Backed up to Sheet');
-  }catch(err){
-    console.warn('Sheets backup failed (will retry on next change):', err);
-    if(err && err.refused){
-      // The sheet deliberately said no (e.g. it would overwrite real data with an empty backup). Say so — even for auto-backups, once.
-      if(!silent || !sheetsRefusalShown){
-        sheetsRefusalShown = true;
-        const liveOn = /Live sync is on/i.test(err.message||'');
-        toast(liveOn ? '⚠ Cloud is in Live-sync mode, Live sync is OFF here. Settings → tick Live sync → Save. Reload will not fix this.' : '⚠ Backup refused: ' + escapeHTML(err.message));
-      }
-    } else if(!silent) toast('⚠ Sheet backup failed — check the URL and your connection');
-  }
-}
-
-async function restoreFromSheets(skipConfirm){
-  if(DEMO_MODE){ toast('Sheets restore is disabled in demo mode'); return; }
-  const url = DB.settings.sheetsWebAppUrl;
-  if(!url){ alert('Add your Apps Script Web App URL in Settings first.'); return; }
-  try{
-    toast('Fetching backup…');
-    const json = await syncReq(`${url}${url.indexOf('?')<0?'?':'&'}action=restore${DB.settings.syncToken?'&token='+encodeURIComponent(DB.settings.syncToken):''}&_=${Date.now()}`,null,60000);
-    if(!json.ok) throw new Error(json.error||'Restore failed');
-    const parsed = json.data;
-    if(!parsed || !Array.isArray(parsed.students)) throw new Error('Backup on the sheet looks corrupted or empty');
-    if(!skipConfirm && !confirm('Replace ALL current data with the Google Sheet backup? This cannot be undone.')) return;
-    const keepLocal = {}; SYNC_LOCAL_SETTINGS.forEach(k=>{ if(DB.settings && DB.settings[k]!==undefined) keepLocal[k]=DB.settings[k]; }); // this device's own URL/token/theme must survive a restore
-    DB = mergeIntoDefaults(parsed);
-    Object.assign(DB.settings, keepLocal);
-    DB.settings.onboarded = true;
-    DB_KEY = REAL_DB_KEY; DEMO_MODE = false; // restoring is always a real-account action
-    syncResetBase();
-    if(json.rev!==undefined){ const S=syncLoadState(); syncSetBase(S,syncPayload(),json.rev); syncSaveState(S); }   // this device now equals the cloud at that revision: later syncs are true 3-way merges, deletions included
-    saveDB();
-    navigate('dashboard');
-    toast('Restored from Google Sheet');
-  }catch(err){
-    alert('Restore failed: ' + err.message);
-  }
-}
+// Kept only so older call sites keep working. "Backup Now" is now "Sync Now"; there is no blind overwrite any more.
+function pushToSheets(silent){ if(!silent) toast('Tick "Live sync" in Settings and press Save — then "Sync Now".'); }
+function restoreFromSheets(skipConfirm){ return syncDownloadAll(skipConfirm===true); }
 
 /* ---------------- toast ---------------- */
 let toastTimer=null;
@@ -3620,7 +3534,6 @@ function bindFirstRun(){
       if(url) DB.settings.sheetsWebAppUrl = url;
       DB.settings.onboarded = true;
       DB.settings.syncOn = false;
-      window.__autoWas = DB.settings.sheetsAutoBackup; if(DB.settings.sheetsWebAppUrl) DB.settings.sheetsAutoBackup = false;
       saveDB();
       navigate('dashboard');
       toast('Account set up');
@@ -5759,22 +5672,20 @@ function renderSettings(){
       ${st.lastSheetsBackupAt ? `Last synced: ${new Date(st.lastSheetsBackupAt).toLocaleString()}` : 'Not connected yet.'}
     </div>
     <div class="field"><label>Apps Script Web App URL</label><input id="setSheetsUrl" value="${escapeHTML(st.sheetsWebAppUrl||'')}" placeholder="https://script.google.com/macros/s/…/exec"></div>
-    <div class="field"><label><input type="checkbox" id="setSheetsAuto" ${st.sheetsAutoBackup?'checked':''} style="width:auto;margin-right:6px;">Auto-backup after every change</label></div>
-    <div class="field"><label><input type="checkbox" id="setSyncOn" ${syncEnabled()?'checked':''} style="width:auto;margin-right:6px;">Live sync between devices (phone ⇄ PC) — merges, never overwrites</label></div>
+    <div class="field"><label><input type="checkbox" id="setSyncOn" ${syncEnabled()?'checked':''} style="width:auto;margin-right:6px;">Live sync — the Google Sheet is the one source of truth; each device keeps a copy</label></div>
     <div class="field"><label>Sync token (optional — only if you set one in Code.gs)</label><input id="setSyncToken" value="${escapeHTML(st.syncToken||'')}" placeholder="leave empty if not used"></div>
     <div class="page-sub" id="syncStatusText" style="margin-bottom:10px;">${escapeHTML(syncStatusLine())}</div>
     <button class="btn primary block" id="saveSheetsSettingsBtn" style="margin-bottom:10px;">Save</button>
     <div class="grid2">
-      <button class="btn block" id="sheetsBackupNowBtn">${syncEnabled()?'Sync Now':'Backup Now'}</button>
-      <button class="btn block" id="sheetsRestoreBtn">Restore From Sheet</button>
+      <button class="btn block" id="sheetsBackupNowBtn">Sync Now</button>
+      <button class="btn block" id="sheetsRestoreBtn">Download from the sheet</button>
     </div>
     <div class="grid2" style="margin-top:10px;">
       <button class="btn block" id="syncUndoBtn">Undo last sync</button>
       <button class="btn block" id="syncConflictsBtn">Conflict log</button>
     </div>
-    <button class="btn block" id="syncReplaceCloudBtn" style="margin-top:10px;">Replace cloud with this device</button>
-    <div class="hint" style="margin-top:6px;">Use this on the device whose data is right (for example after importing a backup). It shows what will disappear before it does anything.</div>
-    <div class="hint" style="margin-top:10px;">One-time setup: create a Google Sheet, Extensions → Apps Script, paste the provided Code.gs, Deploy → Web App → Anyone with the link → copy the URL here. Only pushes automatically — restoring back always needs an explicit tap on "Restore From Sheet" plus a confirm, so nothing overwrites your data by accident.</div>
+    <button class="btn block" id="syncUploadBtn" style="margin-top:10px;">Upload this device to the sheet</button>
+    <div class="hint" style="margin-top:10px;">One-time setup: create a Google Sheet, Extensions → Apps Script, paste the provided Code.gs, Deploy → Web App → Anyone with the link → copy the URL here. The sheet is the one copy that counts: phones and PCs only send what they change and catch up from it. Deleting something deletes it everywhere. \"Upload\" puts this device's data on the sheet (replaces it, after showing what disappears); \"Download\" makes this device an exact copy of the sheet.</div>
   </div>
   `}
   <div class="card">
@@ -5832,15 +5743,14 @@ function bindSettings(){
   const sheetsSaveBtn = document.getElementById('saveSheetsSettingsBtn');
   if(sheetsSaveBtn) sheetsSaveBtn.addEventListener('click', ()=>{
     DB.settings.sheetsWebAppUrl = view.querySelector('#setSheetsUrl').value.trim();
-    DB.settings.sheetsAutoBackup = view.querySelector('#setSheetsAuto').checked;
     DB.settings.syncOn = view.querySelector('#setSyncOn').checked;
     DB.settings.syncToken = view.querySelector('#setSyncToken').value.trim();
     saveDB(); render(); toast('Saved'); if(syncEnabled()) syncNow('manual');
   });
   const sheetsBackupNowBtn = document.getElementById('sheetsBackupNowBtn');
   if(sheetsBackupNowBtn) sheetsBackupNowBtn.addEventListener('click', ()=>{ if(syncEnabled()) syncNow('manual'); else pushToSheets(false); });
-  const syncReplaceCloudBtn = document.getElementById('syncReplaceCloudBtn');
-  if(syncReplaceCloudBtn) syncReplaceCloudBtn.addEventListener('click', ()=>syncReplaceCloud());
+  const syncUploadBtn = document.getElementById('syncUploadBtn');
+  if(syncUploadBtn) syncUploadBtn.addEventListener('click', ()=>syncUploadAll());
   const syncUndoBtn = document.getElementById('syncUndoBtn');
   if(syncUndoBtn) syncUndoBtn.addEventListener('click', syncUndoLast);
   const syncConflictsBtn = document.getElementById('syncConflictsBtn');
@@ -5867,8 +5777,7 @@ function importBackup(e){
       DB = mergeIntoDefaults(parsed); // same merge path as normal load — new fields fall back to defaults, nothing dropped
       Object.assign(DB.settings, keepLocal);
       syncResetBase();
-      DB.settings.syncOn = false;   // hold sync until the person decides what this file means for the cloud (otherwise it would be union-merged back in)
-      window.__autoWas = DB.settings.sheetsAutoBackup; if(DB.settings.sheetsWebAppUrl) DB.settings.sheetsAutoBackup = false;
+      DB.settings.syncOn = false;   // hold sync until the person decides what this file means for the sheet
       saveDB();
       navigate('dashboard');
       toast('Backup restored');

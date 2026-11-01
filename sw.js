@@ -10,7 +10,7 @@
 // Prayer-time API calls are NEVER cached here — handled separately inside
 // the app itself (localStorage-based cache), so Maghrib is never stale.
 
-const CACHE_NAME = 'teacher-planner-v7'; // bumped: sync tombstones / replace-cloud build — old caches are dropped on activate
+const CACHE_NAME = 'teacher-planner-v7'; // bumped: sheet-is-the-truth sync build — old caches are dropped on activate
 const APP_SHELL = [
   './',
   './index.html',
